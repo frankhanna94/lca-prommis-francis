@@ -203,10 +203,219 @@ where needed when creating a flow (e.g., natural gas - from MJ to kg)
 Needed improvements and other TODO's for the current deliverable (09/30/2025)
 -----------------------------------------------------------------------------
 
-1- Update db in EDX
 
----
 
-# CODE REVIEW
-1.  In create_olca_process submodule, there is some repetitious code
-    (e.g., `generate_id` and `_ensure_client` is found in several modules).
+
+New Technical Direction - EY25 - Q3/Q4 (11/10/2025)
+---------------------------------------------------\
+
+Info from TD
+    * Establish a protocol for bi-directional communication between 
+            PrOMMiS and openLCA - allow openLCA results to inform PrOMMiS optimization
+                ** Supports constraint-based decision framework
+                    My understanding, is that this should involve something simialr to the 
+                    current PrOMMiS optimization framework
+                        1- Setting Goal
+                        2- Setting optimization parameter
+                        3- Setting constraints
+                        2 and 3 are probably what the TD note is trying to address
+                            (e.g. "narrow the analysis scope in the context of practical considerations)
+    * Deliverable should be in the form of a 
+        ** methods memo
+        ** demonstration on the UKy flowsheet
+        ** test on other flowsheets
+
+Notes on optimization model in PrOMMiS
+    * Optiomization in prommis is done using nonlinear programming via IPOPT which
+        ** updates unfixed design variables 
+        ** to minimize the active Objective (e.g., minimize environmental impact)
+
+    * the workflow consists of 
+        ** unfixing decision variables (e.g., membrane length)
+            {variable}.unfix()
+        ** adding constraints using pyomo's 
+            *** Expression({insert expression})
+            *** Param(initialize={insert parameter}, mutable = True)
+            *** Constraint(expr={insert conditional expression})
+        ** adding objective
+            Objective(expr = {insert variable such as cost}, sense = {e.g., minimize})
+
+    * the above optimization elements can all be defined in a single function
+        ** for exampple def build_optimization(...)
+            to facilitate configuring the optimizer
+        ** or this can be a populated automatically based on inputs in a 
+            yaml configuration file
+
+Potential additions/modifications to existing solution from previous PrOMMiS-LCA integration example
+    * Create new function to configure the optimization solver
+        variables, constraints, Objective
+        ** the objective and constraint in this case can be complicated 
+            *** which impact category?
+            *** is cost included?
+            *** if more than one impact category 
+                weighing factors might be needed for the optimization equation
+            *** if env impact + cost are included
+                weighing factors might be needed for the optimization equation 
+    * Add feature to create a parameter for each exchange
+    * Create function to populate parameters after every iteration
+        ** we can possibly include a feature - maybe an option for the user - to save 
+            all the solutions for subsequent revision and/or data analysis
+    * Create function to set allocation - which is very crucial for CM flowsheets
+    * Create function to allow modeling displaced/avoided products
+    * Modify existing script to allow the user define uncertainty distributions to exchanges
+        Potential applications include
+        ** Optimizing based on a statistical inference rather than a single deterministic value
+        ** Allowing the user to run an uncertainty analysis for the final solution
+
+Other necessary modifications to facilitate the reusability of the solution for other flowsheets
+    * PrOMMiS data collection and conversion to LCA relevant units
+        ** script should be limited to PrOMMiS output
+        ** add function to enable the user to add exchanges as needed when running the model
+            (without having to modify the code)
+    * Exchange table development
+        ** modify existing functions or create new function that allows users to add documentation for each
+            exchange
+
+FOQUS Installation
+------------------
+
+- FOQUS Documentation: https://foqus.readthedocs.io/en/latest/chapt_install/install_python.html
+
+- led by NETL and in collaboration with other NL and units
+
+- Purpose: connect different models
+    * uncertainty
+    * sensitivity
+
+
+Ubuntu notes
+------------
+Installation steps (using both conda and pip)
+
+    * conda create --name ccsi-foqus -c conda-forge python=3.12
+    * conda activate ccsi-foqus
+    
+    Install FOQUS
+    =============
+    * conda install pyqt
+    * git clone https://github.com/CCSI-Toolset/FOQUS
+    * cd FOQUS
+    * pip install -e .
+
+    Install Psuade Lite 
+    ===================
+    * conda install --yes -c conda-forge -c CCSI-Toolset psuade-lite=1.9
+
+    Install NLopt
+    =============
+    conda install -c conda-forge nlopt
+
+    Install prommis
+    ===============
+    * pip install prommis
+    * idaes get-extensions
+    * pip install pyomo
+
+    Install IPOPT
+    =============
+    * conda install -c conda-forge ipopt
+
+    Install prommis-lca
+    ===================
+    * git clone https://github.com/KeyLogicLCA/lca-prommis.git
+    * cd lca-prommis
+    * pip install -e .
+
+                Note:
+                ====
+                * openLCA-related libraries require python >= 3.11 
+                    this was the main reason to move to linux/wsl
+                    we can run prommis/foqus/olca in python 3.12
+                * After resolving all dependency issues - one remained
+                    * foqus     requires    matplotlib <=3.7.5 and >=3.6.0
+                    * pymatgen  requires    matplotlib >=3.8
+
+                    * Only solution --> downgrade matplotlib to 3.7.5
+                                    --> downgrade pymatgen to 2022.x 
+                                        to be compatible with matplotlib 3.7.5 
+
+                                        Issue: pymatgen 2022.x requires Python 3.10
+
+                BUT - since we're not plotting anything with Pymatgen - this dependency 
+                    issue shouldn't cause any problems 
+                
+                SKIP THE DETAILS --> see final versions below
+                ================
+                matplotlib  3.10.7
+                pymatgen    2024.11.13
+                tabulate    0.9.0
+
+    Install openLCA (TYLER CAN YOU PLEASE ADD THE COMMANDS for openLCA HERE? Please:) )
+    ===============
+
+Use and testing
+===============
+
+- Running foqus: 
+    * Now that conda automatically starts - cd ccsi-foqus
+    * run:  foqus
+        or
+            foqus &     #this allows the user to regain control of their terminal while using foqus 
+
+- Test
+    * Create a node in foqus - call it 't' and initiate it at '0'
+    * Run the below script:
+    
+    """
+        import pandas as pd
+        import olca_schema as olca
+        from netlolca.NetlOlca import NetlOlca
+        import prommis.uky.uky_flowsheet as uky 
+        import src as lca_prommis
+
+        m, _ = uky.main() 
+
+        prommis_data = lca_prommis.data_lca.get_lca_df(m)
+
+        df = lca_prommis.convert_lca.convert_flows_to_lca_units(prommis_data, hours=1, mol_to_kg=True, water_unit='m3')
+
+        REO_list = [
+            "Yttrium Oxide",
+            "Lanthanum Oxide",
+            "Cerium Oxide",
+            "Praseodymium Oxide",
+            "Neodymium Oxide",
+            "Samarium Oxide",
+            "Gadolinium Oxide",
+            "Dysprosium Oxide",
+        ]
+
+        df = lca_prommis.final_lca.merge_flows(df, merge_source='Solid Feed', new_flow_name='374 ppm REO Feed', value_2_merge=REO_list)
+
+
+        df = lca_prommis.final_lca.merge_flows(df, merge_source='Roaster Product', new_flow_name='73.4% REO Product')
+
+
+        df = lca_prommis.final_lca.merge_flows(df, merge_source='Wastewater', new_flow_name='Wastewater', merge_column='Category') 
+
+        df = lca_prommis.final_lca.merge_flows(df, merge_source='Solid Waste', new_flow_name='Solid Waste', merge_column='Category') 
+
+        finalized_df = lca_prommis.final_lca.finalize_df(
+                df=df, 
+                reference_flow='73.4% REO Product', 
+                reference_source='Roaster Product',
+                water_type='raw fresh water'
+            )
+
+        f["t"] = finalized_df["LCA_Amount"].iloc[0]
+    """
+    * Running the script should update the value of the output 't' from 0 to 1043142.7399884746
+
+DFO documentation
+-----------------
+
+
+NLopt documentation
+-------------------
+
+
