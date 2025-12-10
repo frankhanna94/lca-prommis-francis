@@ -290,71 +290,78 @@ FOQUS Installation
 
 Ubuntu notes
 ------------
-Installation steps (using both conda and pip)
+1. Install conda
+    `wget https://repo.anaconda.com/archive/Anaconda3-2025.12-1-Linux-x86_64.sh`
+    `bash Anaconda3-2025.12-1-Linux-x86_64.sh`
+    (Run as user; installs to ~/anaconda3; accept .bashrc edits)
+2. Setup conda
+    conda create -n ccsi-foqus python=3.12
+    conda activate ccsi-foqus
+    conda install pyqt
+3. Install FOQUS
+    git clone https://github.com/CCSI-Toolset/FOQUS
+    cd FOQUS
+    pip install -e .
+4. Install extras: Psuade
+    conda install --yes -c conda-forge -c CCSI-Toolset psuade-lite=1.9
+5. Install extras: NLopt
+    conda install -y -c conda-forge nlopt
+6. Install PrOMMiS
+    pip install prommis  (note: downgrades NumPy to 1.26.4
+    idaes get-extensions
+    (note: I did not need to reinstall pyomo)
+7. Install extras: IPOPT
+    conda install -y -c conda-forge ipopt
+8. Install older version of PyMatGen
+    pip install pymatgen==2024.1.26
+9. Install prommis-lca
+    git clone https://github.com/keylogiclca/lca-prommis.git
+    cd lca-prommis
+    pip install -e .
+10. Install missing dependencies for Qt (to run FOQUS GUI)
+    sudo apt install -y libxcb-xinerama0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xfixes0 libxkbcommon-x11-0 libglu1-mesa
+    (NOTE: only the last two are mentioned in FOQUS readthedocs)
 
-    * conda create --name ccsi-foqus -c conda-forge python=3.12
-    * conda activate ccsi-foqus
+    Note:
+    ====
+    * openLCA-related libraries require python >= 3.11 
+        this was the main reason to move to linux/wsl
+        we can run prommis/foqus/olca in python 3.12
+    * After resolving all dependency issues - one remained
+        * foqus     requires    matplotlib <=3.7.5 and >=3.6.0
+        * pymatgen  requires    matplotlib >=3.8
+
+        * Only solution --> downgrade matplotlib to 3.7.5
+                        --> downgrade pymatgen to 2022.x 
+                            to be compatible with matplotlib 3.7.5 
+
+                            Issue: pymatgen 2022.x requires Python 3.10
+
+    BUT - since we're not plotting anything with Pymatgen - this dependency 
+        issue shouldn't cause any problems 
     
-    Install FOQUS
-    =============
-    * conda install pyqt
-    * git clone https://github.com/CCSI-Toolset/FOQUS
-    * cd FOQUS
-    * pip install -e .
+    SKIP THE DETAILS --> see final versions below
+    ================
+    matplotlib  3.10.7
+    pymatgen    2024.11.13
+    tabulate    0.9.0
 
-    Install Psuade Lite 
-    ===================
-    * conda install --yes -c conda-forge -c CCSI-Toolset psuade-lite=1.9
+11. Install openLCA for Linux 
+    =========================
+    11.1 wget https://share.greendelta.com/index.php/s/hcl5JAB1p0FxfFe/download
+    11.2 mv download openLCA_mkl_Linux_x64_2.5.0_2025-06-16.tar.gz
+    11.3 gunzip openLCA_mkl_Linux_x64_2.5.0_2025-06-16.tar.gz
+    11.4 tar -xvf openLCA_mkl_Linux_x64_2.5.0_2025-06-16.tar
+    11.5 mkdir Downloads
+    11.6 mv openLCA_mkl_Linux_x64_2.5.0_2025-06-16.tar Downloads/
 
-    Install NLopt
-    =============
-    conda install -c conda-forge nlopt
+12. Test run openLCA; it works!
+    ==========================
+    12.1 cd openLCA/
+    12.2 ./openLCA
 
-    Install prommis
+13. Use and testing
     ===============
-    * pip install prommis
-    * idaes get-extensions
-    * pip install pyomo
-
-    Install IPOPT
-    =============
-    * conda install -c conda-forge ipopt
-
-    Install prommis-lca
-    ===================
-    * git clone https://github.com/KeyLogicLCA/lca-prommis.git
-    * cd lca-prommis
-    * pip install -e .
-
-                Note:
-                ====
-                * openLCA-related libraries require python >= 3.11 
-                    this was the main reason to move to linux/wsl
-                    we can run prommis/foqus/olca in python 3.12
-                * After resolving all dependency issues - one remained
-                    * foqus     requires    matplotlib <=3.7.5 and >=3.6.0
-                    * pymatgen  requires    matplotlib >=3.8
-
-                    * Only solution --> downgrade matplotlib to 3.7.5
-                                    --> downgrade pymatgen to 2022.x 
-                                        to be compatible with matplotlib 3.7.5 
-
-                                        Issue: pymatgen 2022.x requires Python 3.10
-
-                BUT - since we're not plotting anything with Pymatgen - this dependency 
-                    issue shouldn't cause any problems 
-                
-                SKIP THE DETAILS --> see final versions below
-                ================
-                matplotlib  3.10.7
-                pymatgen    2024.11.13
-                tabulate    0.9.0
-
-    Install openLCA (TYLER CAN YOU PLEASE ADD THE COMMANDS for openLCA HERE? Please:) )
-    ===============
-
-Use and testing
-===============
 
 - Running foqus: 
     * Now that conda automatically starts - cd ccsi-foqus
@@ -363,8 +370,13 @@ Use and testing
             foqus &     #this allows the user to regain control of their terminal while using foqus 
 
 - Test
-    * Create a node in foqus - call it 't' and initiate it at '0'
-    * Run the below script:
+    * Go to flowsheets (2nd tab on the top)
+    * Create a node in foqus - Left toolbar - 2nd button from the top
+    * Select the 'Select' option (1st button on Left toolbar) 
+    * Click on node
+    * Edit node (3rd button from the bottom in left toolbar)
+    * Create new output variable - call it 't' and initiate it at '0' 
+    * Add a script that calculates the output variable - Use the below script:
     
     """
         import pandas as pd
