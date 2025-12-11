@@ -200,11 +200,6 @@ information: goal, scope, functional unit, assumptions, etc.
 6- enable modifying flow unit (in lca_df_finalized) and adding conversion parameters
 where needed when creating a flow (e.g., natural gas - from MJ to kg)
 
-Needed improvements and other TODO's for the current deliverable (09/30/2025)
------------------------------------------------------------------------------
-
-
-
 
 New Technical Direction - EY25 - Q3/Q4 (11/10/2025)
 ---------------------------------------------------\
@@ -276,20 +271,8 @@ Other necessary modifications to facilitate the reusability of the solution for 
         ** modify existing functions or create new function that allows users to add documentation for each
             exchange
 
-FOQUS Installation
-------------------
-
-- FOQUS Documentation: https://foqus.readthedocs.io/en/latest/chapt_install/install_python.html
-
-- led by NETL and in collaboration with other NL and units
-
-- Purpose: connect different models
-    * uncertainty
-    * sensitivity
-
-
-Ubuntu notes
-------------
+Foqus installation on Ubuntu
+----------------------------
 1. Install conda
     `wget https://repo.anaconda.com/archive/Anaconda3-2025.12-1-Linux-x86_64.sh`
     `bash Anaconda3-2025.12-1-Linux-x86_64.sh`
@@ -369,7 +352,8 @@ Ubuntu notes
         or
             foqus &     #this allows the user to regain control of their terminal while using foqus 
 
-- Test
+14. Testing
+    =======
     * Go to flowsheets (2nd tab on the top)
     * Create a node in foqus - Left toolbar - 2nd button from the top
     * Select the 'Select' option (1st button on Left toolbar) 
@@ -423,11 +407,47 @@ Ubuntu notes
     """
     * Running the script should update the value of the output 't' from 0 to 1043142.7399884746
 
-DFO documentation
------------------
+LCA-PrOMMiS Development Notes - (Q3Q4)
+--------------------------------------
+
+12/10/2025
+==========
+    - Anuja (from Miguel's Team) gave an introduction to FOQUS
+    - After several iterations, we were able to run foqus on Ubuntu
+
+    Next steps
+    - Reach out to Anuja and ask for another meeting to explain how DFO can be used?
+        (Now that FOQUS, PrOMMiS, and LCA are all set up in one working environment)
+
+    - Depending on the outcome - we reach out again to NETL with the updated approaches
 
 
-NLopt documentation
--------------------
+    - Brainstorming on FOQUS use
 
+        PrOMMiS Node
+        ------------
+        * Outputs (Relevant to LCA)
+            Conduct all calculations in output code snippet 
+            Convert values to LCA relevant inputs
+            The outputs should be the different exchanges values   
+                - separately
+                    Or
+                - df
+            Can we pass an object like a df via foqus?
+                Tried testing it by setting the variabel type to Object 
+                but it's not working
+            
+            solution 1
+                * Export finalized_df as csv to a temp folder
+                * import that same csv in the openLCA node
+
+            solution 2
+                * Extract the distinct exchange values from prommis node
+                * pass the values to the openLCA node
+                * compile values again into a df that can be used to create new 
+                    process, PS, and results
+        
+        openLCA node
+        ------------
+        * Works perfectly 
 
