@@ -7,6 +7,7 @@
 # DEPENDENCIES
 ###############################################################################
 import pandas as pd
+import os
 
 
 ###############################################################################
@@ -52,6 +53,7 @@ def generate_total_results(result):
     total_impacts_df['uuid'] = total_impacts_df['temp'].str.get(2)
     total_impacts_df = total_impacts_df.drop(columns=['temp', 'impact_category'])    
     # Save results
+    if not os.path.exists("output"):
+        os.makedirs("output")
     total_impacts_df.to_csv("output/total_impacts.csv", index=False)
-
     return total_impacts_df
