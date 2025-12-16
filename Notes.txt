@@ -447,7 +447,128 @@ LCA-PrOMMiS Development Notes - (Q3Q4)
                 * compile values again into a df that can be used to create new 
                     process, PS, and results
         
+            After discussion with Anuja - solution 1 doesn't work
+            There has to be parameters being passed via an edge
+        
         openLCA node
         ------------
-        * Works perfectly 
+            * Works perfectly 
+            * All the work and user input is done via the Ubuntu terminal
 
+    Update 12/15/2025
+    -----------------
+    - Next steps: Incroporate Prommis, LCA calculations, and the optimizer
+        * for context:see the discussion notes with Anuja saved in the project folder 
+                    Meetings/Other Meetings/2025-12-12/20251212_MoM.docx
+        * PrOMMiS node - the modifications are highlighted below
+            ** inputs
+                - I created two inputs for the variables i want to vary throughout the optimization exercise
+                    In this case I used the leach liquid feed and the recycle split fraction
+            ** outputs
+                - the outputs from this node are the lca prommis data converted to LCA relevant units
+                - every exchange had a unit
+                    For future reference - to improve the code, the output variables should be called the 
+                        same as the final lca_df_finalized csv file 
+                        (this will make more sense as you read the documentation)
+            ** Node script
+                - The script includes the code to import the dependencies, run the prommis uky flowsheet
+                    extract the data, convert it to LCA relevant units, and pass it to the output variables
+                    created in the step above
+                - One important aspect in the node script is the setup of the inputs (Dependent variables)
+                    There were two ways to incorporate these variables
+                        Option 1: modify the uky main function and set those as inputs (e.g., main (uky, leach_liquid, split_fraction))
+                                    and then when calling this function in the node script, the second and third arguments would be 
+                                    set to be equal to the foqus inputs - because after every iteration, those will change and we want them to 
+                                    be passed back to prommis
+                                
+                                The challenge with option 1 is that every time we want to run a simulation we have to:
+                                    1) modify the prommis uky main function
+                                    2) reinstall or basically upgrade prommis in the ccsi-foqus environment
+                                    3) run foqus and run optimization exercise
+                                        NOTE: If there are errors/mistakes in the edits, debugging can be challenging as it will
+                                            probably require repeating the 3 steps above until the errors disappear
+                        Option 2: Execute all the steps included in the uky main function
+                                    Among these steps, the user can set the selected parameters equal to the foqus dependent variables
+                                    ============
+                                    Code snippet
+                                    ============
+                                    m = uky.build()
+                                    uky.set_operating_conditions(m)
+                                    # Important note regarding the below - all the variables in the UKy flowsheet are already fixed
+                                    # setting the leach liquid feed flow in prommis to the appropriate input variable in foqus
+                                    # this automatically unfixes the variable in PrOMMiS 
+                                    if "Leach liquid feed" in x:
+	                                    m.fs.leach_liquid_feed.flow_vol.fix(x["Leach liquid feed"])
+                                    # setting the split fraction in prommis to the appropriate input variable in foqus
+                                    if "split_fraction" in x:
+	                                    m.fs.load_sep.split_fraction[0.0, 'recycle'].fix(x["split_fraction"])
+                                    ==========================================================================
+                                    NOTE: You have to import all the dependencies in the module containing the UKy main function
+                                    this option was used in this exercise
+        * openLCA node
+            ** inputs
+                - For each output from the 'PrOMMiS' node, an input was created in the openLCA node
+                - the inputs were given the following
+                    * 0 minimum value
+                    * 1000000 maximum value (for the sake of this exercise)
+                    * 0 initial value
+                - For future reference, the inputs should be called the same as the PrOMMiS outputs 
+                    and the same as the lca_df_finalized csv file generated inthe PrOMMiS node
+                    (this will make more sense when you get to the Node script part below)
+            ** outputs
+                - Originally before meeting Anuja, the output was set to be multiple impact categories
+                - In this exercise, only GWP was used (This will make more sense when u read the next point (Node Script))
+            ** Node Script
+                - At this point (as of 12/15/2025), we didn't have the code needed to set parameters in openLCA and
+                    update them at every iteration
+                - For this reason, the openLCA calculation was bypassed by a quick (not ideal) formula to calculate the total GWP
+                    * We needed the exchanges table
+                        * the amounts were retrieved from the PrOMMiS node via the edge
+                        * a python dictionary was hard-coded to connect each flow to its
+                            unit, is_input, is_reference, etc.
+                            NOTE: If the names were matching everywhere, it would have been easy to automate the generation
+                            of the python dictionary via a separate function # at this point some of the above notes should make more sense
+                        * The gwp factor for each input/emission was added (hard coded) into the dictionary
+                    * A script was drafted to multiply the inputs and emissions amounts with their corresponding GWP factors
+                - the calculated GWP was returned to the openLCA node output f(["GWP"])
+                ============
+                Code snippet
+                ============
+                def get_amount(v):
+                    return float(v.value) if hasattr(v, "value") else float(v)
+
+                total_gwp = 0.0
+
+                for param, meta in param_metadata.items():
+                    if "gwp" not in meta:
+                        continue
+                    total_gwp += get_amount(x[param]) * meta["gwp"]
+                # store the final value in the foqus output
+                f["GWP"] = total_gwp
+                ==============================================================
+        * Edge: Create an edge connecting PrOMMiS to the openLCA function 
+                when configuring that edge create a connection between the outputs of PrOMMiS node and the inputs of openLCA
+                Check:
+                    Go to the openLCA node and make sure all the inputs are highlighted in 'pink' => connected
+
+        * Optimization tab (at the very top of the GUI)
+            ** Variables
+                - You will automatically find the two UKy input variables you defined above
+                - You need to change them to 'Decision' variables to allow the optimizer to run
+                    NOTE: THE OPTIMIZER REQUIRES AT LEAST TWO DECISION VARIABLES
+                - Select reasonable range (min/max) and initial value
+                    Observation: When i set very wide ranges - many of the runs failed, which is probably expected as
+                                many of the extreme sets of split_fraction and leach feed volume didnt make any sense
+
+            ** Objective
+                - Create a new objective - set it to f["openLCA"]["GWP"]
+                    NOTE: You can use the variable explorer for this
+                - give it a penalty scale
+                    TODO:   how to determine this factor
+                            What's its effect on the optimization results
+                - give it a 'Variable for Failure' - I set this as the static run result
+            
+            ** Solver
+                - Select BOBYQA as an optimization model
+            ** Run
+                - Run 
