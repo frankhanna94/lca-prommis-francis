@@ -13,7 +13,8 @@ This step is performed entirely in prommis_LCA_data.py
 
     Step 1.1: Identify all LCA-relevant flows in the UKy PrOMMiS flowsheet
     ======================================================================
-In total, 17 material streams with 45 material flows were identified in addition to 4 electricity flows and 2 heat flows. 2 new flows were also added to reflect data from the NETL UP Library: sodium hydroxide and oxalic acid.
+In total, 17 material streams with 45 material flows were identified in addition to 4 electricity flows and 2 heat flows. 
+2 new flows were also added to reflect data from the NETL UP Library: sodium hydroxide and oxalic acid.
 
     Step 1.2: Extract all flows/parameters and structure them in a dataframe
     =========================================================================
@@ -302,7 +303,8 @@ Foqus installation on Ubuntu
     cd lca-prommis
     pip install -e .
 10. Install missing dependencies for Qt (to run FOQUS GUI)
-    sudo apt install -y libxcb-xinerama0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xfixes0 libxkbcommon-x11-0 libglu1-mesa
+    sudo apt install -y libxcb-xinerama0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 
+        libxcb-render-util0 libxcb-shape0 libxcb-xfixes0 libxkbcommon-x11-0 libglu1-mesa
     (NOTE: only the last two are mentioned in FOQUS readthedocs)
 
     Note:
@@ -572,3 +574,41 @@ LCA-PrOMMiS Development Notes - (Q3Q4)
                 - Select BOBYQA as an optimization model
             ** Run
                 - Run 
+
+    Update 12/16/2025: Constructing an optimization flosheet without the GUI
+    -----------------
+    It seems there is a way to setup foqus and DFO directly through python based on the developer documentation
+        *  https://foqus.readthedocs.io/en/stable/chapt_dev/index.html#
+    
+    Going through the foqus git repository: https://github.com/CCSI-Toolset/FOQUS.git
+    there is a possibility of using foqus features directly from foqus_lib.framework
+    In this repository, some modules of interest include:
+        * foqus_lib.framework.graph --> Contains several modules - most notably for our applicationa/use:
+          =========================
+            1- A 'graph.py' module containing methods to:
+                - add/delete/edit nodes: addNode, deleteNode, deleteNodes, renameNode
+                - add/delete edges: addEdge, deleteEdge, deleteEdges
+                - run a node: runNode
+                - run all nodes in the graph: runGraph
+                - do other sanity checks on the graph
+
+                Link: https://github.com/CCSI-Toolset/FOQUS/blob/2d5dc0eb824e442c3afa97e3a9a756e4f79094a4/foqus_lib/framework/graph/graph.py#L857
+
+            2- A 'node.py' module containing all the classes for nodes, most important is the 'Node' class
+                - Node --> stores all the information for graph nodes, run calculations/simulations etc.
+
+            3- A 'edge.py' module containing two main classes
+                - Edge connect: stores information about a connection between two variables
+                - Edge: manage edges --> includes functions to:
+                    - add Edge
+                    - Remove Edge
+                    - Transfer information
+
+        * foqus_lib.framework.optimizer --> Contains several modules for different solvers
+          =============================
+            This module contains a sub-module for NLopt which we use in our LCA-PrOMMis integration work
+            1- NLopt.py
+                Contains a single class -- 'opt' which enables:
+                    - Initializing NLopt including setting the solver (e.g., BOBYQA) among many other variables
+                        (In the exercise with Anuja we kept those unchaged/default)
+                    - Running the solver: optimize()
