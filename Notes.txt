@@ -612,3 +612,95 @@ LCA-PrOMMiS Development Notes - (Q3Q4)
                     - Initializing NLopt including setting the solver (e.g., BOBYQA) among many other variables
                         (In the exercise with Anuja we kept those unchaged/default)
                     - Running the solver: optimize()
+
+Brainstorming - Methods needed for ILI worflow via FOQUS
+--------------------------------------------------------
+
+- Function to create new foqus flowsheet, nodes, and edge                                   --> Done
+- Function to create a foqus node in a given flowsheet                                      --> Done
+- Function to create a foqus edge in a given flowsheet                                      --> Done
+- Function to create an input variable                                                      --> Done
+- Function to create an output variable                                                     --> Done
+- Function to assign variable to node inputs or outputs                                     --> Done
+- Function to define a node script                                                          --> Done
+- Function to select decision variables 
+    * This should be based on the UKy flowsheet
+    * The user would get a list of variables to pick from - based on the UKy flowsheet
+- Function to setup the inputs for the prommis node
+    * The function would create an input for each decision variable selected by the user
+- Function to setup the outputs of the prommis node
+    * Random run of the UKy flowsheet
+    * Generates df
+    * Converts to LCA relevant units
+    * Generate output for each exchange (to be passed to LCA node)
+- Function to setup node script for prommis node
+    * Builds model
+    * Fixes decision variables to be equal to node inputs
+    * Generates result
+    * Converts to LCA relevant units
+    * Assigns each result to its relevant output
+- Function to create local parameters in openLCA
+- Function to create parameter sets for a product system in openLCA
+- Function to create inputs for LCA node   
+    * The inputs of the LCA node are based on the outputs of the prommis node
+- Function to create outputs for LCA node
+    * Each impact category should be an output
+- Function to setup the script for the LCA node
+    * Assign inputs to parameters set values
+    * run analysis for product system
+    * unpack openLCA result object
+    * assign each result impact category to its relevant output
+- Function to setup variables
+    * Set min, max, scale, and type (decision) for each decision variable seleted by the user
+- Function to define objective. This step can involve predefined setups -- options include
+    * minimize one environmental impact category -- the user would have to select one
+    * minimize multiple environmental impact categories -- the user would have to:
+        ** determine number of impact cateogories
+        ** select impact categories
+        ** setup governing objective function (equation)
+    * minimie cost
+- Function to setup constraint 
+- Function to select solver
+- Function to run optimization
+- Function to extract FOQUS results
+    
+Headless FOQUS Notes
+--------------------
+1- pip install git+https://github.com/CCSI-Toolset/FOQUS.git
+
+2- Import dependencies
+
+    import foqus_lib.framework.graph.graph as gr
+    # this automatically imports all other modules:
+    # edge, node, nodeVars, nodeModelTypes
+
+    import foqus_lib.framework.graph.edge as ed
+
+3- Start a session
+    ili_sess = gr.Graph()
+
+4- Add node
+    # prommis node
+    prommis_node = ili_sess.addNode("prommis", 1, 1, 1) # 1,1,1 are the coordinates of the node
+
+    # lca node
+    lca_node = ili_sess.addNode("lca", 2, 1, 1) # 2,1,1 are the coordinates of the node
+
+5- Add the edge connecting the two nodes
+    # edge
+    prommis_lca_edge = ed.edgeConnect("prommis", "lca")
+    # test of edge is active
+    prommis_lca_edge.active # this should return true
+
+6- Configuring nodes # example on prommis node created above
+    # node inputs
+
+
+    # node outputs
+
+
+    # node script
+    # the node script should be saved as a doc string and appended to the node
+    # e.g.
+    script = """print ("hello world")"""
+    prommis_node.pythonCode = script
