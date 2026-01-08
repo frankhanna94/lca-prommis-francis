@@ -113,7 +113,7 @@ def add_edge_to_flowsheet(flowsheet, node1, node2, edge_name):
 
 # Function to create a new input variable
 #----------------------------------------
-def create_variable (variable_name, value, min, max, unit, distribution, description):
+def create_input_variable (variable_name, value, min, max, unit, distribution, description):
     """
     This function creates a new input variable.
 
