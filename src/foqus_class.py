@@ -41,10 +41,12 @@ class NetlFoqus(object):
         """Initialize NetlFoqus class."""
         self.vars = []  # all variables
         self.dv = []    # user-defined decision variables
-        self.exchanges = []  # user-defined exchanges
+        self.exchanges = pd.DataFrame()  # user-defined exchanges
+        self.exchanges_vars = []  # user-defined exchanges
         self.fs = None  # foqus flowsheet object
         self.prommis_node = None  # ProMMiS node object
         self.olca_node = None     # openLCA node object
+        self.edge = None    # edge object
         self.logger = logging.getLogger(__name__)
 
 
@@ -273,7 +275,7 @@ class NetlFoqus(object):
         self.create_session("UKy REE Flowsheet")
         self.prommis_node = self.add_node("ProMMiS")
         self.olca_node = self.add_node("openLCA")
-        edge = self.add_edge(self.prommis_node, self.olca_node)
+        self.edge = self.add_edge(self.prommis_node, self.olca_node)
 
         # Get UKy exchange table
         my_vars, my_df, my_cm = get_uky_vars_exchanges()
@@ -281,11 +283,40 @@ class NetlFoqus(object):
         self.vars = my_vars
 
         # Add exchange variables names from exchange flow names:
-        for var_name in my_df['Flow_Name'].tolist():
-            self.exchanges.append(var_name)
+        self.exchanges = my_df
 
         return my_cm
+    
+    def initialize_intermediate_variables(self):
+        exchnages_names = self.exchanges['Flow_Name'].tolist()
+        for var_name in exchnages_names:
+            self.exchanges_vars.append(nv.NodeVars(opvname=var_name, dtype = float))
+            value = self.exchanges.loc[self.exchanges['Flow_Name'] == var_name, 'LCA_Amount'].values[0]
+            self.exchanges_vars[-1].setValue(value)
+            logging.info(
+                "Set output properties for %s: value=%f" % (var_name, value)
+            )
+            if self.prommis_node is not None:
+                self.prommis_node.outVars[var_name] = self.exchanges_vars[-1]    
 
+        for var_name in exchnages_names:
+            input_var_name = var_name + "_input"
+            self.exchanges_vars.append(nv.NodeVars(ipvname=input_var_name, dtype = float))
+            value = self.exchanges.loc[self.exchanges['Flow_Name'] == var_name, 'LCA_Amount'].values[0]
+            self.exchanges_vars[-1].setValue(value)
+            logging.info(
+                "Set input properties for %s: value=%f" % (input_var_name, value)
+            )
+            if self.olca_node is not None:
+                self.olca_node.inVars[input_var_name] = self.exchanges_vars[-1]
+
+    def connect_intermediate_variables(self, node1, node2):
+        for var_out in node1.outVars:
+            var_in = next(var for var in node2.inVars if var.startswith(var_out))
+            self.edge.addConnection(var_out, var_in)
+            logging.info(
+                "Connected %s to %s" % (var_out, var_in)
+            )
 
 ###############################################################################
 # FUNCTIONS
@@ -382,6 +413,7 @@ def initialize_decision_variables(nf_obj, m):
             )
         )
 
+    
 #
 # SANDBOX
 #
@@ -396,4 +428,13 @@ if __name__ == "__main__":
     nf.add_decision_variable(my_var)
 
     # Help with initializing decision variables
-    initialize_decision_variables(nf, m)
+    foqus_class.initialize_decision_variables(nf, m)
+
+    # Initialize intermediate variables
+    nf.initialize_intermediate_variables()
+
+    # connect intermediate variables
+    nf.connect_intermediate_variables(nf.prommis_node, nf.olca_node)
+
+    # initiate olca_node
+    
