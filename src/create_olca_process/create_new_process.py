@@ -12,6 +12,7 @@ import datetime
 
 import pandas as pd
 import olca_schema as olca
+from olca_schema import ParameterScope
 
 from src.create_olca_process.search_flows_and_providers import search_and_select
 from src.create_olca_process.create_exchange_elementary_flow import create_exchange_elementary_flow
