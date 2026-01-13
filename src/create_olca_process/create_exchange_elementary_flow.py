@@ -41,6 +41,7 @@ def create_exchange_elementary_flow(client,
                                     flow_uuid,
                                     unit,
                                     amount,
+                                    amount_formula,
                                     is_input) -> olca.Exchange:
     """Create and return an `olca.Exchange` for an ELEMENTARY_FLOW.
 
@@ -92,6 +93,12 @@ def create_exchange_elementary_flow(client,
             "Adjust your unit or select another flow"
         )
 
+    # sort out the amount vs amount formula 
+    if amount_formula:
+        amount = None
+    else:
+        amount = amount
+
     # Set unit.
     # If we pass the unit as a string, we need to resolve it to the unit object.
     # The reason why we have the _resolve_unit function is that if we pass the
@@ -109,6 +116,7 @@ def create_exchange_elementary_flow(client,
     if exchange.unit is None:
         exchange.unit = o_units.unit_ref(unit.lower())
     exchange.amount = float(amount)
+    exchange.amount_formula = amount_formula
     exchange.is_input = is_input
 
     return exchange

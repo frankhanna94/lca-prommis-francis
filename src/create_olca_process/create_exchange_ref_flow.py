@@ -59,7 +59,7 @@ __all__ = [
 ###############################################################################
 # FUNCTIONS
 ###############################################################################
-def create_exchange_ref_flow(client,flowName, amount, unit, isInput, isRef):
+def create_exchange_ref_flow(client,flowName, amount, amount_formula, unit, isInput, isRef):
     """Request from user the new flow or existing flow for the reference exchange.
     """
     # Get input from user
@@ -72,14 +72,14 @@ def create_exchange_ref_flow(client,flowName, amount, unit, isInput, isRef):
     choice = input("Enter your choice (1 or 2): ")
     if choice == "1":
         flow_uuid = search_and_select_flows(keywords=None, client=client)
-        return create_exchange_ref_existing_flow(client, flow_uuid, amount, unit)
+        return create_exchange_ref_existing_flow(client, flow_uuid, amount, amount_formula, unit)
     elif choice == "2":
-        return create_exchange_ref_new_flow(client, flowName, amount, unit, isInput, isRef)
+        return create_exchange_ref_new_flow(client, flowName, amount, amount_formula, unit, isInput, isRef)
     else:
         raise ValueError("Invalid choice")
 
 
-def create_exchange_ref_existing_flow(client, flow_uuid, amount, unit):
+def create_exchange_ref_existing_flow(client, flow_uuid, amount, amount_formula, unit):
     """
     Create and return an 'olca.Exchange' for PRODUCT or WASTE flows.
 
@@ -119,6 +119,14 @@ def create_exchange_ref_existing_flow(client, flow_uuid, amount, unit):
             "Adjust your unit or select another flow"
         )
 
+
+    # sort out the amount vs amount formula 
+    if amount_formula:
+        amount = None
+    else:
+        amount = amount
+
+
     # Create exchange
     exchange = client.make_exchange()
     exchange.flow = flow
@@ -127,6 +135,7 @@ def create_exchange_ref_existing_flow(client, flow_uuid, amount, unit):
     if exchange.unit is None:
         exchange.unit = o_units.unit_ref(unit.lower())
     exchange.amount = amount
+    exchange.amount_formula = amount_formula
     exchange.is_input = False
     exchange.is_quantitative_reference = True
 
@@ -136,6 +145,7 @@ def create_exchange_ref_existing_flow(client, flow_uuid, amount, unit):
 def create_exchange_ref_new_flow(client,
                                  flowName,
                                  amount,
+                                 amount_formula,
                                  unit,
                                  isInput,
                                  isRef):
@@ -185,12 +195,18 @@ def create_exchange_ref_new_flow(client,
         name=saved_flow.name
     )
 
+    if amount_formula:
+        amount = None
+    else:
+        amount = amount
+
     # Use the saved flow reference to create the exchange.
     exchange = olca.Exchange(
         flow = flow_ref,
         flow_property = ex_flow_property_factor,
         unit = unit_obj,
-        amount = 1.0,
+        amount = amount,
+        amount_formula = amount_formula,
         is_input = isInput,
         is_quantitative_reference = isRef
     )

@@ -48,6 +48,7 @@ def create_exchange_pr_wa_flow(client,
                                flow_uuid,
                                provider_uuid,
                                amount,
+                               amount_formula,
                                unit,
                                is_input):
     """
@@ -96,6 +97,13 @@ def create_exchange_pr_wa_flow(client,
             "The flow property is not found in the flow. "
             "Adjust your unit or select another flow"
         )
+    
+    # sort out the amount vs amount formula 
+    if amount_formula:
+        amount = None
+    else:
+        amount = amount
+
 
     # Create exchange.
     exchange = client.make_exchange()
@@ -105,6 +113,7 @@ def create_exchange_pr_wa_flow(client,
     if exchange.unit is None:
         exchange.unit = o_units.unit_ref(unit.lower())
     exchange.amount = float(amount)
+    exchange.amount_formula = amount_formula
     exchange.is_input = is_input
     exchange.default_provider = olca.Ref.from_dict(
         {"@type": "Process", "@id": provider_uuid}
