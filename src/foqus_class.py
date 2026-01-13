@@ -393,6 +393,12 @@ def get_uky_vars_exchanges():
     )
     return (all_vars, finalized_df, m)
 
+def initiate_lca_model(client, process_name, process_description, lca_df_finalized, impact_method_uuid):
+    process = lca_prommis.create_lca.create_new_process(client,lca_df_finalized,process_name,process_description)
+    ps = lca_prommis.create_ps.create_ps(client, process.id)
+    result = lca_prommis.run_analysis.run_analysis(client, ps.id, impact_method_uuid)
+    result.wait_until_ready()
+    total_impacts = lca_prommis.generate_total_results.generate_total_results(result)
 
 def initialize_decision_variables(nf_obj, m):
     for dv in nf_obj.dv:
@@ -436,5 +442,30 @@ if __name__ == "__main__":
     # connect intermediate variables
     nf.connect_intermediate_variables(nf.prommis_node, nf.olca_node)
 
-    # initiate olca_node
+    # initiate lca_model
+    lca_df_finalized = nf.exchanges
+    netl = NetlOlca()
+    netl.connect()
+    netl.read()
     
+    process_name = "REO Extraction From Coal Mining Refuse | UKy Flowsheet"
+
+    process_description = """This process involves the production of a Rare 
+    Earth Oxide solid extraction from coal mining refuse. The scope of this 
+    work starts with the leaching of size-reduced REE-rich feedstock (REE: 
+    Rare Earth Elements) and ends with the recovery of mixed REO solids. The 
+    process consists of six main stages: 1) Mixing and Leaching, 2) Rougher 
+    Solvent Extraction, 3) Cleaner Solvent Extraction, 4) Precipitation, 
+    5) Solid-Liquid (S/L) separation, and 6) Roasting. This process does not 
+    account for upstream processes leading to the production of REE-rich 
+    feedstock nor does it account for Downstream processes leading to the 
+    separation of REE contained in the REO. The main product is a rare earth 
+    oxide solid with no other by-products or co-products. The functional 
+    unit is 1 kg of recovered REO solids. The material and energy inputs 
+    shown in the system boundary figure below have been shortlisted and 
+    estimated based on the UKy flowsheet output, as well as other relevant 
+    literature."""
+
+    impact_method_uuid = '60cb71ff-0ef0-4e6c-9ce7-c885d921dd15'
+
+    foqus_class.initiate_lca_model(netl, process_name, process_description, lca_df_finalized, impact_method_uuid)
