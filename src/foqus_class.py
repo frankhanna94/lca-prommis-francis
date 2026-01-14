@@ -394,13 +394,14 @@ def get_uky_vars_exchanges():
     return (all_vars, finalized_df, m)
 
 def initiate_lca_model(client, process_name, process_description, lca_df_finalized, impact_method_uuid):
-    process = lca_prommis.create_lca.create_new_process(client,lca_df_finalized,process_name,process_description)
+    process, my_parameters = lca_prommis.create_lca.create_new_process(client,lca_df_finalized,process_name,process_description)
     ps = lca_prommis.create_ps.create_ps(client, process.id)
+    ps_uuid = ps.id
     result = lca_prommis.run_analysis.run_analysis(client, ps.id, impact_method_uuid)
     result.wait_until_ready()
     total_impacts = lca_prommis.generate_total_results.generate_total_results(result)
 
-    return total_impacts
+    return total_impacts, my_parameters, ps_uuid
 
 def initialize_decision_variables(nf_obj, m):
     for dv in nf_obj.dv:
@@ -490,10 +491,4 @@ if __name__ == "__main__":
 
     impact_method_uuid = '60cb71ff-0ef0-4e6c-9ce7-c885d921dd15'
 
-    total_impacts = foqus_class.initiate_lca_model(netl, process_name, process_description, lca_df_finalized, impact_method_uuid)
-
-    # we need 
-    # the total impacts to initiate the output variables of the olca node
-    # list of exchanges and associated parameters to update them
-    # ps uuid - to access and append a parameter set
-    
+    total_impacts, my_parameters, ps_uuid = foqus_class.initiate_lca_model(netl, process_name, process_description, lca_df_finalized, impact_method_uuid)

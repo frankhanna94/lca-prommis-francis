@@ -92,6 +92,7 @@ def create_new_process(client, df, process_name, process_description):
     # 4. Create exchanges
     exchanges = []
     parameters = []
+    parameters_table = pd.DataFrame(columns=['Parameter_Name', 'Parameter_Description', 'Parameter_Value'])
     count = 0
 
     # Loop through the dataframe, find reference product, and create exchanges
@@ -115,6 +116,7 @@ def create_new_process(client, df, process_name, process_description):
                     print("----------------------------------------")
                     exchange = create_exchange_ref_flow(client, product, amount, parameter.name, unit, is_input, row['Reference_Product'])
                     exchanges.append(exchange)
+                    parameters_table.loc[count-1, ('Parameter_Name', 'Parameter_Description', 'Parameter_Value')] = (f"p{count}", product, amount)
                     # If reference flow, then we don't need to search for a
                     # process.
                     break
@@ -135,6 +137,7 @@ def create_new_process(client, df, process_name, process_description):
                                 f"{product}"
                             )
                             exchanges.append(exchange)
+                            parameters_table.loc[count-1, ('Parameter_Name', 'Parameter_Description', 'Parameter_Value')] = (f"p{count}", product, amount)
                             break
                         except Exception as e:
                             print(
@@ -175,6 +178,7 @@ def create_new_process(client, df, process_name, process_description):
                                 f"flow: {product}"
                             )
                             exchanges.append(exchange)
+                            parameters_table.loc[count-1, ('Parameter_Name', 'Parameter_Description', 'Parameter_Value')] = (f"p{count}", product, amount)
                             break
                         except Exception as e:
                             print(
@@ -215,6 +219,7 @@ def create_new_process(client, df, process_name, process_description):
                                 f"flow: {product}"
                             )
                             exchanges.append(exchange)
+                            parameters_table.loc[count-1, ('Parameter_Name', 'Parameter_Description', 'Parameter_Value')] = (f"p{count}", product, amount)
                             break
                         except Exception as e:
                             print(
@@ -248,7 +253,7 @@ def create_new_process(client, df, process_name, process_description):
     created_process = client.client.put(process)
     print(f"Successfully created process: {process_name}")
     print(f"Process saved successfully to openLCA database!")
-    return created_process
+    return created_process, parameters_table
 
 
 def read_dataframe(df):
@@ -358,9 +363,6 @@ def create_parameter(
 #
 # TESTING
 #
-
-# NOTE to self
-# need to enhance the check for the amount formula
 
 if __name__ == "__main__":
     
