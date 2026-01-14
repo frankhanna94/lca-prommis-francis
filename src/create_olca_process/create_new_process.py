@@ -96,6 +96,7 @@ def create_new_process(client, df, process_name, process_description):
 
     # Loop through the dataframe, find reference product, and create exchanges
     for _, row in df.iterrows():
+        count+=1
         # Gives you the option to try again if you make a mistake
         while True:
             try:

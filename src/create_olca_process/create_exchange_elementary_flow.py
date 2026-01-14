@@ -93,12 +93,6 @@ def create_exchange_elementary_flow(client,
             "Adjust your unit or select another flow"
         )
 
-    # sort out the amount vs amount formula 
-    if amount_formula:
-        amount = None
-    else:
-        amount = amount
-
     # Set unit.
     # If we pass the unit as a string, we need to resolve it to the unit object.
     # The reason why we have the _resolve_unit function is that if we pass the

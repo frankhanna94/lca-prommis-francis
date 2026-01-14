@@ -97,13 +97,6 @@ def create_exchange_pr_wa_flow(client,
             "The flow property is not found in the flow. "
             "Adjust your unit or select another flow"
         )
-    
-    # sort out the amount vs amount formula 
-    if amount_formula:
-        amount = None
-    else:
-        amount = amount
-
 
     # Create exchange.
     exchange = client.make_exchange()

@@ -400,6 +400,8 @@ def initiate_lca_model(client, process_name, process_description, lca_df_finaliz
     result.wait_until_ready()
     total_impacts = lca_prommis.generate_total_results.generate_total_results(result)
 
+    return total_impacts
+
 def initialize_decision_variables(nf_obj, m):
     for dv in nf_obj.dv:
         # Execution string to get current value from model
@@ -425,7 +427,27 @@ def initialize_decision_variables(nf_obj, m):
 #
 if __name__ == "__main__":
     # Import and initialize NetlFoqus w/ UKy flowsheet
-    from foqus_class import NetlFoqus
+    import src.foqus_class as foqus_class
+    from src.foqus_class import NetlFoqus
+    import os
+    import logging
+
+    import pandas as pd
+    import olca_schema as olca
+    from netlolca.NetlOlca import NetlOlca
+    import prommis.uky.uky_flowsheet as uky
+    from prommis.uky.costing.ree_plant_capcost import QGESSCostingData
+    from pyomo.environ import TransformationFactory
+    from pyomo.core.base.var import Var
+    from idaes.core.util.model_diagnostics import DiagnosticsToolbox
+    import foqus_lib.framework.graph.graph as gr
+    import foqus_lib.framework.graph.node as nd
+    import foqus_lib.framework.graph.edge as ed
+    import foqus_lib.framework.graph.nodeVars as nv
+    from foqus_lib.framework.uq.Distribution import Distribution
+
+    import src as lca_prommis
+
     nf = NetlFoqus()
     m = nf.init_uky()
 
@@ -448,7 +470,7 @@ if __name__ == "__main__":
     netl.connect()
     netl.read()
     
-    process_name = "REO Extraction From Coal Mining Refuse | UKy Flowsheet"
+    process_name = "TESTING - REO Extraction From Coal Mining Refuse | UKy Flowsheet"
 
     process_description = """This process involves the production of a Rare 
     Earth Oxide solid extraction from coal mining refuse. The scope of this 
@@ -468,4 +490,10 @@ if __name__ == "__main__":
 
     impact_method_uuid = '60cb71ff-0ef0-4e6c-9ce7-c885d921dd15'
 
-    foqus_class.initiate_lca_model(netl, process_name, process_description, lca_df_finalized, impact_method_uuid)
+    total_impacts = foqus_class.initiate_lca_model(netl, process_name, process_description, lca_df_finalized, impact_method_uuid)
+
+    # we need 
+    # the total impacts to initiate the output variables of the olca node
+    # list of exchanges and associated parameters to update them
+    # ps uuid - to access and append a parameter set
+    
