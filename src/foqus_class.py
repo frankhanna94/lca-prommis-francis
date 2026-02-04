@@ -42,7 +42,7 @@ class NetlFoqus(object):
         self.vars = []  # all variables
         self.dv = []    # user-defined decision variables
         self.exchanges = pd.DataFrame()  # user-defined exchanges
-        self.exchanges_vars = []  # user-defined exchanges
+        self.exchanges_vars = []  # variables of user-defined exchanges
         self.fs = None  # foqus flowsheet object
         self.prommis_node = None  # ProMMiS node object
         self.olca_node = None     # openLCA node object
@@ -268,6 +268,26 @@ class NetlFoqus(object):
         raise ValueError(f"Decision variable {var_name} not found.")
 
     def init_uky(self):
+        """
+        Initialize the UKy flowsheet.
+
+        Parameters
+        ----------
+        None
+
+        Throws
+        ------
+        TypeError
+            If the producing_node or receiving_node is not a valid FOQUS node object
+        ValueError
+            If the exchanges table is not found
+
+
+        Returns
+        -------
+        the UKy flosheet model
+        
+        """
         # Creates a session with ProMMiS and openLCA nodes connected by an edge.
         # Reads the UKy exchange table and populates the variable list.
 
@@ -287,36 +307,99 @@ class NetlFoqus(object):
 
         return my_cm
     
-    def initialize_intermediate_variables(self):
-        exchnages_names = self.exchanges['Flow_Name'].tolist()
-        for var_name in exchnages_names:
+    def initialize_intermediate_variables(self, producing_node, receiving_node):
+        """
+        Initialize the intermediate variables.
+
+        Parameters
+        ----------
+        producing_node : gr.Node
+            The producing node producing an output.
+        receiving_node : gr.Node
+            The receiving node receiving the outputs of the producing node.
+
+        Returns
+        -------
+        None
+        """
+        exchanges_names = self.exchanges['Flow_Name'].tolist()
+        if not isinstance(producing_node, gr.Node):
+            raise TypeError("producing_node must be a valid FOQUS node object")
+        if not isinstance(receiving_node, gr.Node):
+            raise TypeError("receiving_node must be a valid FOQUS node object")
+        for var_name in exchanges_names:
+            self.vars.append(nv.NodeVars(opvname=var_name, dtype = float))
             self.exchanges_vars.append(nv.NodeVars(opvname=var_name, dtype = float))
             value = self.exchanges.loc[self.exchanges['Flow_Name'] == var_name, 'LCA_Amount'].values[0]
             self.exchanges_vars[-1].setValue(value)
             logging.info(
                 "Set output properties for %s: value=%f" % (var_name, value)
             )
-            if self.prommis_node is not None:
-                self.prommis_node.outVars[var_name] = self.exchanges_vars[-1]    
+            if producing_node is not None:
+                producing_node.outVars[var_name] = self.exchanges_vars[-1]    
 
-        for var_name in exchnages_names:
+        for var_name in exchanges_names:
             input_var_name = var_name + "_input"
+            self.vars.append(nv.NodeVars(ipvname=input_var_name, dtype = float))
             self.exchanges_vars.append(nv.NodeVars(ipvname=input_var_name, dtype = float))
             value = self.exchanges.loc[self.exchanges['Flow_Name'] == var_name, 'LCA_Amount'].values[0]
             self.exchanges_vars[-1].setValue(value)
             logging.info(
                 "Set input properties for %s: value=%f" % (input_var_name, value)
             )
-            if self.olca_node is not None:
-                self.olca_node.inVars[input_var_name] = self.exchanges_vars[-1]
+            if receiving_node is not None:
+                receiving_node.inVars[input_var_name] = self.exchanges_vars[-1]
 
     def connect_intermediate_variables(self, node1, node2):
+        """
+        Connect the intermediate variables.
+        Parameters
+        ----------
+        node1 : gr.Node
+            The producing node.
+        node2 : gr.Node
+            The receiving node.
+
+        Returns
+        -------
+        None
+
+        """
         for var_out in node1.outVars:
             var_in = next(var for var in node2.inVars if var.startswith(var_out))
             self.edge.addConnection(var_out, var_in)
             logging.info(
                 "Connected %s to %s" % (var_out, var_in)
             )
+    
+    def initiate_output_variables(self, node, var_name, var_value):
+        """
+        Initiate an output variable for a given node.
+        Parameters
+        ----------
+        node : gr.Node
+            The node to initiate the output variable for.
+        var_name : str
+            The name of the output variable.
+        var_value : float
+            The value of the output variable.
+
+        Returns
+        -------
+        None
+        """
+        if not isinstance(node, gr.Node):
+            raise TypeError("node must be a valid FOQUS node object")
+        self.vars.append(nv.NodeVars(opvname=var_name, dtype = float))
+        self.vars[-1].setValue(var_value)
+        if self.node is not None:
+            self.node.outVars[var_name] = self.vars[-1]
+        logging.info(
+            "Initiated output variable %s for node %s: value=%f" % (var_name, node.name, var_value)
+        )
+        return self.vars[-1]
+
+    
 
 ###############################################################################
 # FUNCTIONS
@@ -394,16 +477,60 @@ def get_uky_vars_exchanges():
     return (all_vars, finalized_df, m)
 
 def initiate_lca_model(client, process_name, process_description, lca_df_finalized, impact_method_uuid):
+    """
+    Initiate the LCA model.
+    Parameters
+    ----------
+    client : olca_ipc.Client
+        The IPC client object.
+    process_name : str
+        The name of the process.
+    process_description : str
+        The description of the process.
+    lca_df_finalized : pandas.DataFrame
+        The finalized LCA dataframe.
+    impact_method_uuid : str
+        The UUID of the impact method.
+
+    Returns
+    -------
+    total_impacts : dict
+        The total impacts of the process.
+    my_parameters : list
+        The parameters of the process.
+    ps_uuid : str
+        The UUID of the product system.
+    """
     process, my_parameters = lca_prommis.create_lca.create_new_process(client,lca_df_finalized,process_name,process_description)
     ps = lca_prommis.create_ps.create_ps(client, process.id)
     ps_uuid = ps.id
-    result = lca_prommis.run_analysis.run_analysis(client, ps.id, impact_method_uuid)
+    # create baseline parameter set
+    parameter_set = lca_prommis.run_analysis.create_parameter_set(client, 
+                                                                process.id, 
+                                                                ps.id, 
+                                                                "Baseline Parameter Set", 
+                                                                "Baseline parameter set for the process", 
+                                                                True)
+    result = lca_prommis.run_analysis.run_analysis(client, ps.id, impact_method_uuid, parameter_set.parameters)
     result.wait_until_ready()
     total_impacts = lca_prommis.generate_total_results.generate_total_results(result)
 
     return total_impacts, my_parameters, ps_uuid
 
 def initialize_decision_variables(nf_obj, m):
+    """
+    Initialize the decision variables.
+    Parameters
+    ----------
+    nf_obj : NetlFoqus
+        The NetlFoqus object.
+    m : pyomo.environ.ConcreteModel
+        The model.
+
+    Returns
+    -------
+    None
+    """
     for dv in nf_obj.dv:
         # Execution string to get current value from model
         my_str = "m.%s.get_values().values()" % dv.ipvname
@@ -460,7 +587,7 @@ if __name__ == "__main__":
     foqus_class.initialize_decision_variables(nf, m)
 
     # Initialize intermediate variables
-    nf.initialize_intermediate_variables()
+    nf.initialize_intermediate_variables(nf.prommis_node, nf.olca_node)
 
     # connect intermediate variables
     nf.connect_intermediate_variables(nf.prommis_node, nf.olca_node)
@@ -492,3 +619,12 @@ if __name__ == "__main__":
     impact_method_uuid = '60cb71ff-0ef0-4e6c-9ce7-c885d921dd15'
 
     total_impacts, my_parameters, ps_uuid = foqus_class.initiate_lca_model(netl, process_name, process_description, lca_df_finalized, impact_method_uuid)
+
+    # create output variables 
+    for impact_category in total_impacts['name']:
+        nf.initiate_output_variables(nf.olca_node, impact_category, total_impacts.loc[total_impacts['name'] == impact_category, 'value'].values[0])
+        logging.info(
+            "Initiated output variable %s for node %s: value=%f" % (impact_category, nf.olca_node.name, total_impacts.loc[total_impacts['name'] == impact_category, 'value'].values[0])
+        )
+    
+    
