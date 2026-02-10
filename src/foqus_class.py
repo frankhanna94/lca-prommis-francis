@@ -574,7 +574,14 @@ def get_uky_vars_exchanges():
     )
     return (all_vars, finalized_df, m)
 
-def initiate_lca_model(client, process_name, process_description, lca_df_finalized, impact_method_uuid):
+def initiate_lca_model(client, 
+                        process_name, 
+                        process_description, 
+                        lca_df_finalized, 
+                        impact_method_uuid, 
+                        parameter_set_name, 
+                        parameter_set_description, 
+                        is_baseline):
     """
     Initiate the LCA model.
     Parameters
@@ -599,17 +606,24 @@ def initiate_lca_model(client, process_name, process_description, lca_df_finaliz
     ps_uuid : str
         The UUID of the product system.
     """
-    process, my_parameters = lca_prommis.create_lca.create_new_process(client,lca_df_finalized,process_name,process_description)
+    process, my_parameters = lca_prommis.create_lca.create_new_process(client,
+                                                                        lca_df_finalized,
+                                                                        process_name,
+                                                                        process_description)
     ps = lca_prommis.create_ps.create_ps(client, process.id)
     ps_uuid = ps.id
     # create baseline parameter set
     parameter_set = lca_prommis.run_analysis.create_parameter_set(client, 
                                                                 process.id, 
                                                                 ps.id, 
-                                                                "Baseline Parameter Set", 
-                                                                "Baseline parameter set for the process", 
-                                                                True)
-    result = lca_prommis.run_analysis.run_analysis(client, ps.id, impact_method_uuid, parameter_set.parameters)
+                                                                parameter_set_name, 
+                                                                parameter_set_description, 
+                                                                is_baseline)
+    
+    result = lca_prommis.run_analysis.run_analysis(client, 
+                                                    ps.id, 
+                                                    impact_method_uuid, 
+                                                    parameter_set.parameters)
     result.wait_until_ready()
     total_impacts = lca_prommis.generate_total_results.generate_total_results(result)
 
@@ -678,8 +692,12 @@ if __name__ == "__main__":
     m = nf.init_uky()
 
     # Add a decision variable
-    my_var = "fs.leach_liquid_feed.flow_vol"
-    nf.add_decision_variable(my_var)
+    my_var1 = "fs.leach_liquid_feed.flow_vol"
+    nf.add_decision_variable(my_var1)
+
+    # [FH] we need at least two decision variables
+    my_var2 = "fs.load_sep.split_fraction"
+    nf.add_decision_variable(my_var2)
 
     # Help with initializing decision variables
     foqus_class.initialize_decision_variables(nf, m)
@@ -716,32 +734,161 @@ if __name__ == "__main__":
 
     impact_method_uuid = '60cb71ff-0ef0-4e6c-9ce7-c885d921dd15'
 
-    total_impacts, my_parameters, ps_uuid = foqus_class.initiate_lca_model(netl, process_name, process_description, lca_df_finalized, impact_method_uuid)
+    parameter_set_name = "Baseline"
+    parameter_set_description = "Baseline parameter set for the process"
+    is_baseline = True
+    total_impacts, my_parameters, ps_uuid = foqus_class.initiate_lca_model (netl, 
+                                                                            process_name, 
+                                                                            process_description, 
+                                                                            lca_df_finalized, 
+                                                                            impact_method_uuid, 
+                                                                            parameter_set_name, 
+                                                                            parameter_set_description, 
+                                                                            is_baseline)
 
     # create output variables 
     for impact_category in total_impacts['name']:
-        nf.initiate_output_variables(nf.olca_node, impact_category, total_impacts.loc[total_impacts['name'] == impact_category, 'value'].values[0])
+        nf.initiate_output_variables(nf.olca_node, 
+                                    impact_category, 
+                                    total_impacts.loc[total_impacts['name'] == impact_category, 'value'].values[0])
         logging.info(
             "Initiated output variable %s for node %s: value=%f" % (impact_category, nf.olca_node.name, total_impacts.loc[total_impacts['name'] == impact_category, 'value'].values[0])
         )
     
     olca_node_script = """
-    # script logic
-    # 1. get the updated parameter values from the node inputs
-    # 2. create a parameter_set df with the parameter names and values
-    # 3. update the parameter set in openLCA
-    # 4. run the analysis
-    # 5. Save the result in the node outputs
+    import pandas as pd
+    import olca_schema as olca
 
+    from netlolca.NetlOlca import NetlOlca
+
+    import src as lca_prommis
+
+    params = my_parameters.copy() # get a copy of the parameters df
+
+    for count, row in params.iterrows():
+        if x[row['parameter_description']] is not None:
+            row['parameter_value'] = float(x[row['parameter_description']]) 
+        else:
+            row['parameter_value'] = 0
+
+    parameter_set_name = "Baseline" # get the parameter_set name
+
+    param_set_ref = lca_prommis.run_analysis.update_parameter ( netl, 
+                                                                ps_uuid, 
+                                                                parameter_set_name, 
+                                                                params)
+
+    result = lca_prommis.run_analysis.run_analysis (netl, 
+                                                    ps_uuid, 
+                                                    impact_method_uuid, 
+                                                    param_set_ref)
+    result.wait_until_ready()
+    total_impacts = lca_prommis.generate_total_results.generate_total_results(result)
+
+    # save the total impacts to the node outputs
+    for result in total_impacts:
+        f[result['name']] = result['value']
     """
+
+    nf.define_node_script(nf.prommis_node, olca_node_script)
 
     prommis_node_script = """
-    # script logic
+    import os
+    import pandas as pd
+    import olca_schema as olca
+    from netlolca.NetlOlca import NetlOlca
+    import prommis.uky.uky_flowsheet as uky 
+    import src as lca_prommis
 
-    # 1. get the updated dv value from the node inputs
-    # 2. build the uky flowsheet model
-    # 3. run the model
-    # 4. Convert PrOMMiS results to LCA relevant units
-    # 5. Save the converted results in the node outputs
-    
+    from pyomo.environ import TransformationFactory
+    from idaes.core.util.model_diagnostics import DiagnosticsToolbox
+    from prommis.uky.costing.ree_plant_capcost import QGESSCostingData
+    import prommis.uky.uky_flowsheet as uky
+
+    home_dir = os.path.expanduser("~")
+
+    m = uky.build()
+
+    uky.set_operating_conditions(m)
+
+    if "Leach liquid feed" in x:
+        m.fs.leach_liquid_feed.flow_vol.fix(x["Leach liquid feed"])
+
+    if "split_fraction" in x:
+        m.fs.load_sep.split_fraction[0.0, 'recycle'].fix(x["split_fraction"])
+
+    uky.set_scaling(m)
+
+    scaling = TransformationFactory("core.scale_model")
+    scaled_model = scaling.create_using(m, rename=False)
+
+    if uky.degrees_of_freedom(scaled_model) != 0:
+        raise AssertionError("Degrees of freedom != 0")
+
+    uky.initialize_system(scaled_model)
+    uky.solve_system(scaled_model)
+
+    uky.fix_organic_recycle(scaled_model)
+    scaled_results = uky.solve_system(scaled_model)
+
+    if not uky.check_optimal_termination(scaled_results):
+        raise RuntimeError("Solver failed to terminate optimally")
+
+    # Propagate results back to original model
+    results = scaling.propagate_solution(scaled_model, m)
+
+    # 5. Add Costing (Optional, but likely needed for optimization)
+    uky.add_costing(m)
+
+    # Costing initialization
+    QGESSCostingData.costing_initialization(m.fs.costing)
+    QGESSCostingData.initialize_fixed_OM_costs(m.fs.costing)
+    QGESSCostingData.initialize_variable_OM_costs(m.fs.costing)
+
+    # Final solve with costing
+    uky.solve_system(m)
+
+    prommis_data = lca_prommis.data_lca.get_lca_df(m)
+
+    df = lca_prommis.convert_lca.convert_flows_to_lca_units(prommis_data, hours=1, mol_to_kg=True, water_unit='m3')
+
+    REO_list = [
+        "Yttrium Oxide",
+        "Lanthanum Oxide",
+        "Cerium Oxide",
+        "Praseodymium Oxide",
+        "Neodymium Oxide",
+        "Samarium Oxide",
+        "Gadolinium Oxide",
+        "Dysprosium Oxide",
+    ]
+
+    df = lca_prommis.final_lca.merge_flows(df, merge_source='Solid Feed', new_flow_name='374 ppm REO Feed', value_2_merge=REO_list)
+
+
+    df = lca_prommis.final_lca.merge_flows(df, merge_source='Roaster Product', new_flow_name='73.4% REO Product')
+
+
+    df = lca_prommis.final_lca.merge_flows(df, merge_source='Wastewater', new_flow_name='Wastewater', merge_column='Category') 
+
+    df = lca_prommis.final_lca.merge_flows(df, merge_source='Solid Waste', new_flow_name='Solid Waste', merge_column='Category') 
+
+    finalized_df = lca_prommis.final_lca.finalize_df(
+            df=df, 
+            reference_flow='73.4% REO Product', 
+            reference_source='Roaster Product',
+            water_type='raw fresh water'
+        )
+
+    output_dir = os.path.join(home_dir, 'output')
+
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    finalized_df.to_csv(os.path.join(output_dir, "finalized_df.csv"), index=False)
+
+    for _, row in finalized_df.iterrows():
+        f[row['Flow_Name']] = row['LCA_Amount']
     """
+
+    nf.define_node_script(nf.prommis_node, prommis_node_script)
