@@ -93,6 +93,56 @@ def create_parameter_set (client, process_uuid, ps_uuid, parameter_set_name, des
 
     return parameter_set
 
+def update_parameter(client, 
+                    ps_uuid, 
+                    parameter_set_name, 
+                    new_parameter_set):
+    """
+    This function updates the parameter set for a given product system
+    
+    Code Logic:
+    - get ps ref object
+    - get parameter set that has name == parameter_set_name
+    - from parameter set get parameters list
+    - loop through parameters (existing as parameter objects ParameterRedef)
+    - for each parameter, update the value - check new value for parameter 
+    name in new_parameter_set
+    
+    Parameters
+    ----------
+    client : olca_ipc.Client
+        The IPC client object.
+    ps_uuid : str
+        The UUID of the product system.
+    parameter_set_name : str
+        The name of the parameter set.
+    new_parameter_set: df
+        A dataframe with the new parameter set.
+        Contains at least two columns: parameter_name and parameter_value
+    
+    Returns
+    -------
+    None
+    """
+
+    # get product system object
+    ps_obj = client.query(olca.ProductSystem, ps_uuid)
+    # get parameter set that has a name == parameter_set_name
+    parameter_set_obj = next(x for x in ps_obj.parameter_sets if x.name == parameter_set_name)
+
+    # loop through parameters in parameter set
+    for param in parameter_set_obj.parameters:
+        # get parameter name
+        param_name = param.name
+        # get new parameter value
+        if new_param_value = new_parameter_set.loc[new_parameter_set['parameter_name'] == param_name, 'parameter_value'].values[0]
+            # update parameter value
+            param.value = new_param_value
+    
+    client.client.put(ps_obj)
+
+    return parameter_set_obj
+
 def run_analysis(client, ps_uuid, impact_method_uuid, parameter_set):
     """
     This function runs the analysis for a product system in openLCA.
@@ -105,7 +155,7 @@ def run_analysis(client, ps_uuid, impact_method_uuid, parameter_set):
         The UUID of the product system.
     impact_method_uuid : str
         The UUID of the impact method.
-    parameter_set : list of olca_schema.ParameterRedef
+    parameter_set : olca_schema.ParameterRedefSet
         The parameter set to be used in the analysis.
     Returns
     -------
@@ -129,8 +179,7 @@ def run_analysis(client, ps_uuid, impact_method_uuid, parameter_set):
     setup.flow_property = None # omitted, the code will use the FU flow property
     setup.impact_method = impact_method_ref
     setup.nw_set = None
-    setup.parameters = parameter_set # no parameters are considered in the current model
-                            # this can be incorporated in the future
+    setup.parameters = parameter_set 
     setup.target = ps_ref
     setup.unit = None # omitted, the code will use the FU unit
     setup.with_costs = False # no costs are considered in the current model

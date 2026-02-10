@@ -392,14 +392,112 @@ class NetlFoqus(object):
             raise TypeError("node must be a valid FOQUS node object")
         self.vars.append(nv.NodeVars(opvname=var_name, dtype = float))
         self.vars[-1].setValue(var_value)
-        if self.node is not None:
-            self.node.outVars[var_name] = self.vars[-1]
+        if node is not None:
+            node.outVars[var_name] = self.vars[-1]
         logging.info(
             "Initiated output variable %s for node %s: value=%f" % (var_name, node.name, var_value)
         )
         return self.vars[-1]
 
-    
+    def define_node_script(self, node, script):
+        """
+        This function defines the script for a give node
+
+        Parameters
+        ----------
+        node : gr.Node
+            The node to define the script for.
+        script : str
+            The script to define for the node.
+
+        Returns
+        -------
+        None
+        """
+        if not isinstance(node, gr.Node):
+            raise TypeError("node must be a valid FOQUS node object")
+        
+        node.pythonCode = script
+        logging.info(
+            "Defined script for node %s: script=%s" % (node.name, script)
+        )
+
+    def set_node_scriptMode(self, node, script_mode):
+        """
+        Set the script mode for a given node.
+        
+        Parameters
+        ----------
+        node : gr.Node
+            The node to set the script mode for.
+        script_mode : str
+            The script mode to set.
+            Options include:
+            'pre' --> runs the script before the model
+            'total' --> runs the script instead of the model
+            'post' --> runs the script after the model
+
+        Returns
+        -------
+        None
+        """
+        if not isinstance(node, gr.Node):
+            raise TypeError("node must be a valid FOQUS node object")
+        
+        if script_mode not in ['pre', 'total', 'post']:
+            raise ValueError("script_mode must be either 'pre', 'total', or 'post'")
+        node.scriptMode = script_mode
+        logging.info(
+            "Set script mode for node %s: script_mode=%s" % (node.name, script_mode)
+        )
+        
+    def run_standalone_node_script(self, node):
+        """
+        Run the script for a given node.
+        This will run the script as if the node 
+        scriptMode is 'total'.
+        
+        Parameters
+        ----------
+        node : gr.Node
+            The node to run the script for.
+        """
+        if not isinstance(node, gr.Node):
+            raise TypeError("node must be a valid FOQUS node object")
+        if node.pythonCode is None:
+            raise ValueError("node has no script to run")
+        
+        node.runPython()
+        logging.info(
+            "Run script for node %s" % (node.name)
+        )
+        
+    def run_node_script (self, node):
+        """
+        Run the script for a given node.
+        This function will run the script based on 
+        the set node scriptMode.
+
+        Options include:
+        'pre' --> runs the script before the model
+        'total' --> runs the script instead of the model
+        'post' --> runs the script after the model
+        
+        Parameters
+        ----------
+        node : gr.Node
+            The node to run the script for.
+        """
+        if not isinstance(node, gr.Node):
+            raise TypeError("node must be a valid FOQUS node object")
+        if node.pythonCode is None:
+            raise ValueError("node has no script to run")
+        
+        node.runCalc()
+        logging.info(
+            "Run script for node %s with script mode %s" % (node.name, node.scriptMode)
+        )
+
 
 ###############################################################################
 # FUNCTIONS
@@ -627,4 +725,23 @@ if __name__ == "__main__":
             "Initiated output variable %s for node %s: value=%f" % (impact_category, nf.olca_node.name, total_impacts.loc[total_impacts['name'] == impact_category, 'value'].values[0])
         )
     
+    olca_node_script = """
+    # script logic
+    # 1. get the updated parameter values from the node inputs
+    # 2. create a parameter_set df with the parameter names and values
+    # 3. update the parameter set in openLCA
+    # 4. run the analysis
+    # 5. Save the result in the node outputs
+
+    """
+
+    prommis_node_script = """
+    # script logic
+
+    # 1. get the updated dv value from the node inputs
+    # 2. build the uky flowsheet model
+    # 3. run the model
+    # 4. Convert PrOMMiS results to LCA relevant units
+    # 5. Save the converted results in the node outputs
     
+    """
