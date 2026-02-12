@@ -8,6 +8,7 @@
 ##############################################################################
 import os
 import logging
+from pathlib import Path
 
 import pandas as pd
 import olca_schema as olca
@@ -35,7 +36,7 @@ class NetlFoqus(object):
     # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
     # Class Global Variables
     # ////////////////////////////////////////////////////////////////////////
-
+    output_dir = Path.home() / "output" 
     # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
     # Class Initialization
     # ////////////////////////////////////////////////////////////////////////
@@ -71,13 +72,16 @@ class NetlFoqus(object):
         raise AttributeError("ndv is a read-only property")
 
     @property
-    def has_session(self):
-        return self.fs is not None #TODO: turns out this is not a sign that the graph has a session
-        #                                 the session has to be defined separately using the session module from foqus
+    def has_graph(self):
+        return self.fs is not None
+        # [FH] changed this to has_graph
+        # the graph lives within a session
+        # create_session function changed to create_graph
+        # new create_session function added
 
-    @has_session.setter
-    def has_session(self, value):
-        raise AttributeError("has_session is a read-only property")
+    @has_graph.setter
+    def has_graph(self, value):
+        raise AttributeError("has_graph is a read-only property")
 
     # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
     # Class Function Definitions
@@ -126,9 +130,9 @@ class NetlFoqus(object):
         ed.Edge
             The created edge object.
         """
-        if not self.has_session:
+        if not self.has_graph:
             raise RuntimeError(
-                "Flowsheet session not created. Call create_session() first."
+                "Flowsheet graph not created. Call create_graph() first."
             )
 
         # check if the from_node is a valid object
@@ -158,7 +162,7 @@ class NetlFoqus(object):
         nd.Node
             The created node object.
         """
-        if not self.has_session:
+        if not self.has_graph:
             raise RuntimeError(
                 "Flowsheet session not created. Call create_session() first."
             )
@@ -166,8 +170,8 @@ class NetlFoqus(object):
         node = self.fs.addNode(node_name)
         return node
 
-    def create_session(self, session_name):
-        """Create a FOQUS flowsheet session.
+    def create_graph(self, graph_name):
+        """Create a FOQUS flowsheet graph.
 
         Parameters
         ----------
@@ -178,7 +182,7 @@ class NetlFoqus(object):
         -------
         None
         """
-        self.fs = gr.Graph(session_name)
+        self.fs = gr.Graph(graph_name)
 
     def set_dv_max(self, var_name, max_val):
         """Set the maximum value for a decision variable.
@@ -296,7 +300,7 @@ class NetlFoqus(object):
         # Reads the UKy exchange table and populates the variable list.
 
         # Create FOQUS flowsheet
-        self.create_session("UKy REE Flowsheet")
+        self.create_graph("UKy REE Flowsheet")
         self.prommis_node = self.add_node("ProMMiS")
         self.olca_node = self.add_node("openLCA")
         self.edge = self.add_edge(self.prommis_node, self.olca_node)
@@ -502,24 +506,42 @@ class NetlFoqus(object):
             "Run script for node %s with script mode %s" % (node.name, node.scriptMode)
         )
 
-    # def create_session(self, useCurrentWorkingDir):
-    #     """
-    #     Create a session.
-    #     Parameters
-    #     ----------
-    #     session_name : str
-    #         The name of the session.
-    #     useCurrentWorkingDir : bool
-    #         Whether to use the current working directory.
-    #     """
-    #     if useCurrentWorkingDir is not None:
-    #         my_session = session(useCurrentWorkingDir)
-    #     else:
-    #         my_session = session(useCurrentWorkingDir=True)
-        
-    #     my_session.flowsheet = self
-        
-    #     return my_session
+    def create_session(self, foqus_wd):
+        """
+        Create a session.
+        Parameters
+        ----------
+        session_name : str
+            The name of the session.
+        foqus_wd : str
+            The path to the FOQUS working directory.
+        useCurrentWorkingDir : bool
+            Whether to use the current working directory.
+
+        Notes:
+        -----
+        * This method requires that the working directory is set to the foqus wd path
+        * The foqus wd path is usually set by the user when installing FOQUS
+          and can vary from one machine to another
+        """
+
+        cwd = os.getcwd()
+
+        if cwd != foqus_wd:
+            os.chdir(foqus_wd)
+            logging.info(
+                "Changed working directory to %s" % foqus_wd
+            )
+        else:
+            logging.info(
+                "Working directory is already %s" % cwd
+            )
+         
+        my_session = session(useCurrentWorkingDir=True)
+
+        my_session.flowsheet = self
+
+        return my_session
 
 ###############################################################################
 # FUNCTIONS
@@ -908,37 +930,78 @@ if __name__ == "__main__":
                                                                             parameter_set_description, 
                                                                             is_baseline)
     
+
+    # save my_parameters to the output directory
+    my_parameters.to_csv(output_dir / "my_parameters.csv", index=False)
+
     # create output variables 
     for impact_category in total_impacts['name']:
         nf.initiate_output_variables(nf.olca_node, 
                                     impact_category, 
                                     total_impacts.loc[total_impacts['name'] == impact_category, 'amount'].values[0])
         logging.info(
-            "Initiated output variable %s for node %s: amount=%f" % (impact_category, nf.olca_node.name, total_impacts.loc[total_impacts['name'] == impact_category, 'amount'].values[0])
+            "Initiated output variable %s for node %s: amount=%f" % (
+            impact_category, 
+            nf.olca_node.name, 
+            total_impacts.loc[total_impacts['name'] == impact_category, 'amount'].values[0]
+            )
         )
     
+    # the ocla node script relies on my_parameters
+    # my parameters is updated after every run but is defined outside the the netlfoqus class
+    # and outside the olca_node_script
+    # to resolve this, my_parameters is stored in a dedicated output directory
+    # and is imported in the olca_node_script
+    # in olca_node_script, the parameters table is updated with a new column 
+    # after updating the parameters table, the parameters file in the output directory is updated
+    # TODO: test lines 988 - 991 separately (outside olca_node_script)
+
     olca_node_script = """
+    # import dependencies
+    from pathlib import Path
     import pandas as pd
     import olca_schema as olca
+    import re
+    import os
 
     from netlolca.NetlOlca import NetlOlca
 
     import src as lca_prommis
 
+    # get the parameters file from the output directory
+    my_parameters_path = Path.home() / "output" / "my_parameters.csv"
+    my_parameters = pd.read_csv(my_parameters_path)
     params = my_parameters.copy() # get a copy of the parameters df
 
-    for count, row in params.iterrows():
-        if x[row['parameter_description']] is not None:
-            row['parameter_value'] = float(x[row['parameter_description']]) 
-        else:
-            row['parameter_value'] = 0
+    # update the parameters table with the new parameter values
+    # make sure we're adding a new column to the parameters table
+    # gets the last column number and adds 1 to it
+    existing = [
+        int(m.group(1))
+        for col in params.columns
+        if (m := re.match(r"parameter_value_(\d+)", col))
+    ]
+    # new column name
+    next_n = max(existing, default=0) + 1
+    new_col = f"parameter_value_{next_n}"
+    # update the parameters table with the new parameter values
+    for count, row in params.iterrows(): 
+        if x[row['parameter_description']] is not None: 
+            row[new_col] = float(x[row['parameter_description']]) 
+        else: row[new_col] = 0
+    
+    # save/overwrite the updated parameters table to the output directory
+    params.to_csv(my_parameters_path, index=False)
 
-    parameter_set_name = "Baseline" # get the parameter_set name
+    # connect to openLCA
+    netl = NetlOlca()
+    netl.connect()
+    netl.read()
 
     param_set_ref = lca_prommis.run_analysis.update_parameter ( netl, 
                                                                 ps_uuid, 
-                                                                parameter_set_name, 
-                                                                params)
+                                                                parameter_set_name = "Baseline", 
+                                                                params = params)
 
     result = lca_prommis.run_analysis.run_analysis (netl, 
                                                     ps_uuid, 
@@ -1055,7 +1118,7 @@ if __name__ == "__main__":
 
     nf.define_node_script(nf.prommis_node, prommis_node_script)
 
-    my_session = nf.create_session(True) # create session
+    my_session = nf.create_session("home/franc/foqus_wd") # create session
     
     problem = setup_optimizer(my_session, "NLopt") # first step in setting up optimizer
 
