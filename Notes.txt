@@ -704,3 +704,62 @@ Headless FOQUS Notes
     # e.g.
     script = """print ("hello world")"""
     prommis_node.pythonCode = script
+
+2/11/2026
+---------
+
+Notes on setting up the optimizer
+
+*   The optimizer has to be setup at the session level
+    So we need to setup or initiate a session first
+*   Then we need to assign the graph to that session
+    e.g., my_session.graph = my_graph
+    IMPORTANT CONSIDERATIONS
+        * here the we need to ensure that all the nodes and edges 
+        are assigned/included within that graph object
+        Technically it should be
+        Approaches:
+        * Approach 1 - either change foques class and base it all on
+        the session object rather than the graph object
+        * Approach 2 - Develop a separate class for the session
+        * Approach 3 - Directly use the session class from the foqus
+        class - 'foqus_lib.framework.session.session'
+*   The next action item would be to setup the optimizer
+    Assuming the session is created - 'my_session'                              --> Done
+
+*   configure optimization problem
+    problem = my_session.optProblem                                             --> Done
+
+*   setup the solver of the problem
+    problem.solver = "NLopt"                                                    --> Done
+
+*   Next define the optimizer inputs
+    **  Decision variables
+        problem.v = ["prommis_node.inVars[0]","prommis_node.inVars[1]"]         --> Done - nf.dv isinstance to be checked
+        #not sure of the syntax
+    **  Objective Function
+        from foqus_lib.framework.optimizer.problem import objectiveFunction
+        objective_1 = objectiveFunction()
+        objective_1.pycode = f[olca_node]['GWP'] #this would minimize GWP
+        problem.obj = [objective_1]
+        problem.objtype = problem.OBJ_TYPE_EVAL                                 --> Done with TODOs
+    **  Constraint                                                              --> In progress
+
+*   Setup solver options                                                        --> Done
+    Basically here everything is left the way it's set by default in 
+    the foqus GUI
+
+    problem.solverOptions["NLopt"] = {
+    "Solver": "BOBYQA",   # Algorithm: BOBYQA, COBYLA, DIRECT, etc.
+    "maxeval": 100,       # Maximum function evaluations
+    "maxtime": 60,        # Maximum time in hours (or float hours)
+    "tolfunrel": 1e-4,    # Relative tolerance
+    "lower": 0.0,         # Lower bound (scaled 0-10 typically)
+    "upper": 10.0         # Upper bound
+    }
+
+*   solver_1 = problem.run(my_session)                                          --> Done
+
+*   wait for the optimization to completes                                      --> Done
+    solver_1.join()
+    print ("Optimization Complete")

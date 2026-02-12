@@ -135,9 +135,9 @@ def update_parameter(client,
         # get parameter name
         param_name = param.name
         # get new parameter value
-        if new_param_value = new_parameter_set.loc[new_parameter_set['parameter_name'] == param_name, 'parameter_value'].values[0]
-            # update parameter value
-            param.value = new_param_value
+        new_param_value = new_parameter_set.loc[new_parameter_set['parameter_name'] == param_name, 'parameter_value'].values[0]
+        # update parameter value
+        param.value = new_param_value
     
     client.client.put(ps_obj)
 

@@ -22,6 +22,8 @@ import foqus_lib.framework.graph.node as nd
 import foqus_lib.framework.graph.edge as ed
 import foqus_lib.framework.graph.nodeVars as nv
 from foqus_lib.framework.uq.Distribution import Distribution
+from foqus_lib.framework.session.session import session
+from foqus_lib.framework.optimizer.problem import objectiveFunction
 
 import src as lca_prommis
 
@@ -48,6 +50,7 @@ class NetlFoqus(object):
         self.olca_node = None     # openLCA node object
         self.edge = None    # edge object
         self.logger = logging.getLogger(__name__)
+        # self.session = session(useCurrentWorkingDir=True) # TBD
 
 
     # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
@@ -69,7 +72,8 @@ class NetlFoqus(object):
 
     @property
     def has_session(self):
-        return self.fs is not None
+        return self.fs is not None #TODO: turns out this is not a sign that the graph has a session
+        #                                 the session has to be defined separately using the session module from foqus
 
     @has_session.setter
     def has_session(self, value):
@@ -498,6 +502,24 @@ class NetlFoqus(object):
             "Run script for node %s with script mode %s" % (node.name, node.scriptMode)
         )
 
+    # def create_session(self, useCurrentWorkingDir):
+    #     """
+    #     Create a session.
+    #     Parameters
+    #     ----------
+    #     session_name : str
+    #         The name of the session.
+    #     useCurrentWorkingDir : bool
+    #         Whether to use the current working directory.
+    #     """
+    #     if useCurrentWorkingDir is not None:
+    #         my_session = session(useCurrentWorkingDir)
+    #     else:
+    #         my_session = session(useCurrentWorkingDir=True)
+        
+    #     my_session.flowsheet = self
+        
+    #     return my_session
 
 ###############################################################################
 # FUNCTIONS
@@ -661,6 +683,146 @@ def initialize_decision_variables(nf_obj, m):
             )
         )
 
+def setup_optimizer(session, solver_name):
+    """
+    This function setups the optimizer for the session
+
+    It creates a problem object, assisngs the solver name, 
+    and appends the decision variables to the problem
+    
+    Parameters
+    ----------
+    session : foqus_lib.framework.session.session
+        The session object.
+    solver_name : str
+        The name of the solver.
+
+    Returns
+    -------
+    problem : foqus_lib.framework.optimizer.problem
+        The problem object.
+    """
+    # TODO: Add error handling for solver name
+    #       solver name should be checked for a list
+    problem = session.optProblem
+    problem.solver = solver_name
+    problem.v = nf.dv   # setup decision variables
+                        # TODO: check how decision variables are stored in nf.dv 
+    return problem
+
+def create_problem_objective(problem, objectives_list, node_name):
+    """
+    This function creates a problem objective
+    
+    Parameters
+    ----------
+    problem : foqus_lib.framework.optimizer.problem
+        The problem object.
+    objectives_list : list
+        The list of objective names.
+        example: ['GWP', 'CED']
+
+    Returns
+    -------
+    problem : foqus_lib.framework.optimizer.problem
+        The problem object.
+    """
+    # TODO: Add error handling for objectives list
+    #       each objective should be checked against 
+    #       the outputVars    
+    for objective in objectives_list:
+        objective_function = objectiveFunction()
+        objective_function.pycode = "f[node_name][objective]"
+        problem.obj.append(objective_function)
+    problem.objtype = problem.OBJ_TYPE_EVAL
+    return problem
+
+#def create_problem_constraint() # In progress
+
+def setup_solver_options(problem, 
+                         use_defaults = False, 
+                         algorithm = None, 
+                         max_func_eval = None, 
+                         max_time = None, 
+                         tol_func_rel = None, 
+                         lower_bound = None, 
+                         upper_bound = None):
+
+    """
+    This function setups the solver options 
+    The user has the option to simply use the default solver options
+    or to specify the solver options manually
+    Parameters
+    ----------
+    use_defaults : bool
+        Whether to use the default solver options.
+    algorithm : str
+        The algorithm to use.
+    max_func_eval : int
+        The maximum number of function evaluations.
+    max_time : float
+        The maximum time in hours.
+    tol_func_rel : float
+        The relative tolerance for the function.
+    lower_bound : float
+        The lower bound.
+    upper_bound : float
+        The upper bound.
+
+    Returns
+    -------
+    problem : foqus_lib.framework.optimizer.problem
+        The problem object.
+    """
+
+    if use_defaults:
+        problem.solverOptions[problem.solver] = {
+        "Solver": "BOBYQA",   
+        "maxeval": 100,       
+        "maxtime": 60,        
+        "tolfunrel": 1e-4,    
+        "lower": 0.0,         
+        "upper": 10.0         
+        }
+    else:
+        # TODO: Add error handling for algorithm
+        #       each algorithm should be checked for a list
+        #       BOBYQA, COBYLA, DIRECT, etc.
+        problem.solverOptions[problem.solver] = {
+            "Solver": algorithm,
+            "maxeval": max_func_eval,
+            "maxtime": max_time,
+            "tolfunrel": tol_func_rel,
+            "lower": lower_bound,
+            "upper": upper_bound
+        }
+
+    return problem
+
+def run_optimization(problem, session):
+    """
+    This function runs the optimization
+    
+    Parameters
+    ----------
+    problem : foqus_lib.framework.optimizer.problem
+        The problem object.
+    session : foqus_lib.framework.session.session
+        The session object.
+
+    Returns
+    -------
+    solver : foqus_lib.framework.optimizer.optimization
+        The solver object.
+    problem : foqus_lib.framework.optimizer.problem
+        The problem object.
+    """
+
+    my_solver = problem.run(session)
+    my_solver.join() # wait for results
+    logging.info("Optimization completed")
+
+    return my_solver, problem
     
 #
 # SANDBOX
@@ -745,14 +907,14 @@ if __name__ == "__main__":
                                                                             parameter_set_name, 
                                                                             parameter_set_description, 
                                                                             is_baseline)
-
+    
     # create output variables 
     for impact_category in total_impacts['name']:
         nf.initiate_output_variables(nf.olca_node, 
                                     impact_category, 
-                                    total_impacts.loc[total_impacts['name'] == impact_category, 'value'].values[0])
+                                    total_impacts.loc[total_impacts['name'] == impact_category, 'amount'].values[0])
         logging.info(
-            "Initiated output variable %s for node %s: value=%f" % (impact_category, nf.olca_node.name, total_impacts.loc[total_impacts['name'] == impact_category, 'value'].values[0])
+            "Initiated output variable %s for node %s: amount=%f" % (impact_category, nf.olca_node.name, total_impacts.loc[total_impacts['name'] == impact_category, 'amount'].values[0])
         )
     
     olca_node_script = """
@@ -790,7 +952,7 @@ if __name__ == "__main__":
         f[result['name']] = result['value']
     """
 
-    nf.define_node_script(nf.prommis_node, olca_node_script)
+    nf.define_node_script(nf.olca_node, olca_node_script)
 
     prommis_node_script = """
     import os
@@ -892,3 +1054,15 @@ if __name__ == "__main__":
     """
 
     nf.define_node_script(nf.prommis_node, prommis_node_script)
+
+    my_session = nf.create_session(True) # create session
+    
+    problem = setup_optimizer(my_session, "NLopt") # first step in setting up optimizer
+
+    problem = create_problem_objective(problem, ["GWP", "CED"], nf.prommis_node.name) # create problem objective
+
+    # TODO: create function to setup problem constraint (In progress)
+
+    problem = setup_solver_options(problem, True) # setup solver options
+
+    my_solver, problem = run_optimization(problem, my_session) # run optimization
