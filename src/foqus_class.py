@@ -539,7 +539,12 @@ class NetlFoqus(object):
          
         my_session = session(useCurrentWorkingDir=True)
 
-        my_session.flowsheet = self
+        # FOQUS optimizers expect flowsheet to be the Graph (gr.Graph) with .input, not NetlFoqus
+        my_session.flowsheet = self.fs
+        # Graph.copyGraph() and runListAsThread expect these session attributes on the flowsheet
+        self.fs.pymodels = my_session.pymodels
+        self.fs.pymodels_ml_ai = my_session.pymodels_ml_ai
+        self.fs.resubMax = getattr(my_session, "resubMax", 0)
 
         return my_session
 
@@ -698,6 +703,9 @@ def initialize_decision_variables(nf_obj, m):
         dv.setValue(my_val)
         dv.setMin(my_min)
         dv.setMax(my_max)
+        # Linear scaling maps [min, max] -> [0, 10] so the NLopt initial point
+        # (scaled=True) lies inside bounds [lower, upper]; required by BOBYQA.
+        dv.scaling = "Linear"
         # NOTE: distribution is uniform by default; can be changed later
         logging.info(
             "Set decision properties for %s: value=%f, min=%f, max=%f" % (
@@ -728,8 +736,9 @@ def setup_optimizer(session, solver_name):
     #       solver name should be checked for a list
     problem = session.optProblem
     problem.solver = solver_name
-    problem.v = nf.dv   # setup decision variables
-                        # TODO: check how decision variables are stored in nf.dv 
+    # FOQUS optimizers expect problem.v to be a list of "NodeName.var_name" strings
+    # (for graph.input.getFlat), not a list of NodeVars objects.
+    problem.v = [f"{nf.prommis_node.name}.{dv.ipvname}" for dv in nf.dv]
     return problem
 
 def create_problem_objective(problem, objectives_list, node_name):
@@ -743,18 +752,23 @@ def create_problem_objective(problem, objectives_list, node_name):
     objectives_list : list
         The list of objective names.
         example: ['GWP', 'CED']
+    node_name : str
+        Name of the node whose outputs are used as objectives (e.g. "openLCA" for GWP/CED).
 
     Returns
     -------
     problem : foqus_lib.framework.optimizer.problem
         The problem object.
     """
+    # Replace objectives so we don't accumulate stale ones from a previous run
+    problem.obj = []
     # TODO: Add error handling for objectives list
     #       each objective should be checked against 
     #       the outputVars    
     for objective in objectives_list:
         objective_function = objectiveFunction()
-        objective_function.pycode = "f[node_name][objective]"
+        # pycode is eval'd by FOQUS; use actual node and objective names in the string
+        objective_function.pycode = f'f["{node_name}"]["{objective}"]'
         problem.obj.append(objective_function)
     problem.objtype = problem.OBJ_TYPE_EVAL
     return problem
@@ -869,10 +883,14 @@ if __name__ == "__main__":
     import foqus_lib.framework.graph.edge as ed
     import foqus_lib.framework.graph.nodeVars as nv
     from foqus_lib.framework.uq.Distribution import Distribution
+    from foqus_lib.framework.session.session import session
+    from foqus_lib.framework.optimizer.problem import objectiveFunction
 
     import src as lca_prommis
 
     output_dir = Path.home() / "output" 
+    if not output_dir.exists():
+        output_dir.mkdir(parents=True, exist_ok=True)
 
     nf = NetlFoqus()
     m = nf.init_uky()
@@ -1015,12 +1033,12 @@ if __name__ == "__main__":
     netl.read()
 
     param_set_ref = lca_prommis.run_analysis.update_parameter ( netl, 
-                                                                ps_uuid = 'c6586b13-e841-4a45-bb89-7684adffbfac', #BUG: ps_uuid is not defined inside the olca_node_script
+                                                                ps_uuid = '3cb6f1e9-cce3-4f31-8e93-dae36b3363d4', #BUG: ps_uuid is not defined inside the olca_node_script
                                                                 parameter_set_name = "Baseline", 
                                                                 new_parameter_set = params) #BUG: index 0 is out of bounds for axis 0 with size 0
 
     result = lca_prommis.run_analysis.run_analysis (netl, 
-                                                    ps_uuid = 'c6586b13-e841-4a45-bb89-7684adffbfac', 
+                                                    ps_uuid = '3cb6f1e9-cce3-4f31-8e93-dae36b3363d4', 
                                                     impact_method_uuid = '60cb71ff-0ef0-4e6c-9ce7-c885d921dd15', 
                                                     parameter_set = param_set_ref.parameters)
     result.wait_until_ready()
@@ -1038,7 +1056,6 @@ if __name__ == "__main__":
     #       if this retuns any errors, the code should be interrupted and tell the user
     #       something is wrong with their node script
 
-    ########################################################## BELOW SCRIPT NOT TESTED/REVIEWED YET
     prommis_node_script = """
     import os
     import pandas as pd
@@ -1140,14 +1157,23 @@ if __name__ == "__main__":
 
     nf.define_node_script(nf.prommis_node, prommis_node_script)
 
-    my_session = nf.create_session("home/franc/foqus_wd") # create session
+    my_session = nf.create_session("/home/franc/foqus_wd") # create session
     
     problem = setup_optimizer(my_session, "NLopt") # first step in setting up optimizer
 
-    problem = create_problem_objective(problem, ["GWP", "CED"], nf.prommis_node.name) # create problem objective
+    # GWP, CED are openLCA node outputs, so pass olca_node.name
+    problem = create_problem_objective(problem, ["Global Warming Potential [AR6, 100 yr]", "Cumulative Energy Demand"], nf.olca_node.name) # create problem objective
 
     # TODO: create function to setup problem constraint (In progress)
 
     problem = setup_solver_options(problem, True) # setup solver options
 
     my_solver, problem = run_optimization(problem, my_session) # run optimization
+
+    # Notes
+    # It seems that the whole code runs and does several iterations
+    # reviewing the parameters file I noticed that the parameters haven't changed from one iteration to another
+    # this can be caused by one of the following:
+    # 1. failed to set the boundaries of the decision variables - this causes many runs to fail and as a result the parameters to stay the same
+    # 2. the transfer of parameters from prommis_node to olca_node is failing and as a results the olca_node inputs are not being updated after every iteration
+    # 3. The selected decision variables simply do not make any difference  - this is not the case this time because the same dv were tested in the foqus GUI and they made a difference
