@@ -129,15 +129,19 @@ def update_parameter(client,
     ps_obj = client.query(olca.ProductSystem, ps_uuid)
     # get parameter set that has a name == parameter_set_name
     parameter_set_obj = next(x for x in ps_obj.parameter_sets if x.name == parameter_set_name)
-
     # loop through parameters in parameter set
     for param in parameter_set_obj.parameters:
         # get parameter name
         param_name = param.name
         # get new parameter value
-        new_param_value = new_parameter_set.loc[new_parameter_set['parameter_name'] == param_name, 'parameter_value'].values[0]
-        # update parameter value
-        param.value = new_param_value
+        param.value = (
+            new_parameter_set.loc[
+                new_parameter_set['parameter_name'] == param_name,
+                'parameter_value'
+            ].iloc[0]
+            if param_name in new_parameter_set['parameter_name'].values
+            else param.value
+        )
     
     client.client.put(ps_obj)
 
@@ -179,7 +183,7 @@ def run_analysis(client, ps_uuid, impact_method_uuid, parameter_set):
     setup.flow_property = None # omitted, the code will use the FU flow property
     setup.impact_method = impact_method_ref
     setup.nw_set = None
-    setup.parameters = parameter_set 
+    setup.parameters = parameter_set
     setup.target = ps_ref
     setup.unit = None # omitted, the code will use the FU unit
     setup.with_costs = False # no costs are considered in the current model

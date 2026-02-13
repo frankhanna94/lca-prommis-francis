@@ -855,7 +855,7 @@ if __name__ == "__main__":
     from src.foqus_class import NetlFoqus
     import os
     import logging
-
+    from pathlib import Path
     import pandas as pd
     import olca_schema as olca
     from netlolca.NetlOlca import NetlOlca
@@ -871,6 +871,8 @@ if __name__ == "__main__":
     from foqus_lib.framework.uq.Distribution import Distribution
 
     import src as lca_prommis
+
+    output_dir = Path.home() / "output" 
 
     nf = NetlFoqus()
     m = nf.init_uky()
@@ -985,13 +987,27 @@ if __name__ == "__main__":
     next_n = max(existing, default=0) + 1
     new_col = f"parameter_value_{next_n}"
     # update the parameters table with the new parameter values
-    for count, row in params.iterrows(): 
-        if x[row['parameter_description']] is not None: 
-            row[new_col] = float(x[row['parameter_description']]) 
-        else: row[new_col] = 0
+    for count, row in params.iterrows():
+        desc = row['parameter_description']
+
+        matching_keys = [k for k in x.keys() if k.startswith(desc)]
+
+        if matching_keys and x[matching_keys[0]] is not None:
+            params.at[count, new_col] = float(x[matching_keys[0]])
+        else:
+            params.at[count, new_col] = 0
+
+    # for count, row in params.iterrows(): 
+    #     if x[row['parameter_description']] is not None: 
+    #         row[new_col] = float(x[row['parameter_description']]) 
+    #     else: 
+    #         row[new_col] = 0
     
     # save/overwrite the updated parameters table to the output directory
     params.to_csv(my_parameters_path, index=False)
+
+    # BUG: water input and water emissions should 
+    # be differentiated in the parameters description
 
     # connect to openLCA
     netl = NetlOlca()
@@ -999,24 +1015,30 @@ if __name__ == "__main__":
     netl.read()
 
     param_set_ref = lca_prommis.run_analysis.update_parameter ( netl, 
-                                                                ps_uuid, 
+                                                                ps_uuid = 'c6586b13-e841-4a45-bb89-7684adffbfac', #BUG: ps_uuid is not defined inside the olca_node_script
                                                                 parameter_set_name = "Baseline", 
-                                                                params = params)
+                                                                new_parameter_set = params) #BUG: index 0 is out of bounds for axis 0 with size 0
 
     result = lca_prommis.run_analysis.run_analysis (netl, 
-                                                    ps_uuid, 
-                                                    impact_method_uuid, 
-                                                    param_set_ref)
+                                                    ps_uuid = 'c6586b13-e841-4a45-bb89-7684adffbfac', 
+                                                    impact_method_uuid = '60cb71ff-0ef0-4e6c-9ce7-c885d921dd15', 
+                                                    parameter_set = param_set_ref.parameters)
     result.wait_until_ready()
     total_impacts = lca_prommis.generate_total_results.generate_total_results(result)
 
     # save the total impacts to the node outputs
-    for result in total_impacts:
-        f[result['name']] = result['value']
+    for _, row in total_impacts.iterrows():
+        f[row['name']] = row['amount']
     """
 
     nf.define_node_script(nf.olca_node, olca_node_script)
 
+    # TODO: Add error handling step here
+    #       include a command line that uses run_standalone_node_script
+    #       if this retuns any errors, the code should be interrupted and tell the user
+    #       something is wrong with their node script
+
+    ########################################################## BELOW SCRIPT NOT TESTED/REVIEWED YET
     prommis_node_script = """
     import os
     import pandas as pd
