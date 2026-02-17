@@ -697,8 +697,8 @@ def initialize_decision_variables(nf_obj, m):
         my_str = "m.%s.get_values().values()" % dv.ipvname
         my_val = [x for x in eval(my_str)][0]
         # Use half and double for min/max
-        my_min = my_val * 0.5
-        my_max = my_val * 2.0
+        my_min = my_val * 0.9
+        my_max = my_val * 1.1
         # Set decision variable properties
         dv.setValue(my_val)
         dv.setMin(my_min)
@@ -736,12 +736,13 @@ def setup_optimizer(session, solver_name):
     #       solver name should be checked for a list
     problem = session.optProblem
     problem.solver = solver_name
-    # FOQUS optimizers expect problem.v to be a list of "NodeName.var_name" strings
-    # (for graph.input.getFlat), not a list of NodeVars objects.
-    problem.v = [f"{nf.prommis_node.name}.{dv.ipvname}" for dv in nf.dv]
+    # HOTFIX: append decision variables rather than assign 
+    # them which results in overwriting an old dv with the following one 
+    for dv in nf.dv:
+        problem.v.append(f"{nf.prommis_node.name}.{dv.ipvname}")
     return problem
 
-def create_problem_objective(problem, objectives_list, node_name):
+def create_problem_objective(problem, objectives_list, node_name, penalty_scale=10):
     """
     This function creates a problem objective
     
@@ -754,6 +755,8 @@ def create_problem_objective(problem, objectives_list, node_name):
         example: ['GWP', 'CED']
     node_name : str
         Name of the node whose outputs are used as objectives (e.g. "openLCA" for GWP/CED).
+    penalty_factor : float
+        The penalty scale factor (default: 10).
 
     Returns
     -------
@@ -769,6 +772,7 @@ def create_problem_objective(problem, objectives_list, node_name):
         objective_function = objectiveFunction()
         # pycode is eval'd by FOQUS; use actual node and objective names in the string
         objective_function.pycode = f'f["{node_name}"]["{objective}"]'
+        objective_function.penScale = penalty_scale
         problem.obj.append(objective_function)
     problem.objtype = problem.OBJ_TYPE_EVAL
     return problem
@@ -903,6 +907,8 @@ if __name__ == "__main__":
     my_var2 = "fs.load_sep.split_fraction"
     nf.add_decision_variable(my_var2)
 
+    # TODO: Need to set decision variables as input variables for prommis_node
+
     # Help with initializing decision variables
     foqus_class.initialize_decision_variables(nf, m)
 
@@ -976,6 +982,11 @@ if __name__ == "__main__":
     # after updating the parameters table, the parameters file in the output directory is updated
     # TODO: test lines 988 - 991 separately (outside olca_node_script)
 
+    # TODO: each set of parameters should be saved in a new column
+    # TODO: modify update parameter to take the column name as input - 
+    #       currently it only considers parameters under column 'parameter_value'
+    #       the result is - when we store new parameters in a new column "parameter_value_1"
+    #       the update_parameters function will use the old parameters
     olca_node_script = """
     # import dependencies
     from pathlib import Path
@@ -1002,8 +1013,8 @@ if __name__ == "__main__":
         if (m := re.match(r"parameter_value_(\d+)", col))
     ]
     # new column name
-    next_n = max(existing, default=0) + 1
-    new_col = f"parameter_value_{next_n}"
+    # next_n = max(existing, default=0) + 1
+    # new_col = f"parameter_value_{next_n}"
     # update the parameters table with the new parameter values
     for count, row in params.iterrows():
         desc = row['parameter_description']
@@ -1011,9 +1022,9 @@ if __name__ == "__main__":
         matching_keys = [k for k in x.keys() if k.startswith(desc)]
 
         if matching_keys and x[matching_keys[0]] is not None:
-            params.at[count, new_col] = float(x[matching_keys[0]])
+            params.at[count, 'parameter_value'] = float(x[matching_keys[0]])
         else:
-            params.at[count, new_col] = 0
+            params.at[count, 'parameter_value'] = 0
 
     # for count, row in params.iterrows(): 
     #     if x[row['parameter_description']] is not None: 
@@ -1033,12 +1044,12 @@ if __name__ == "__main__":
     netl.read()
 
     param_set_ref = lca_prommis.run_analysis.update_parameter ( netl, 
-                                                                ps_uuid = '3cb6f1e9-cce3-4f31-8e93-dae36b3363d4', #BUG: ps_uuid is not defined inside the olca_node_script
+                                                                ps_uuid = 'e5dc2e3a-44db-4a90-a3cf-ff8804ec488f', #BUG: ps_uuid is not defined inside the olca_node_script
                                                                 parameter_set_name = "Baseline", 
                                                                 new_parameter_set = params) #BUG: index 0 is out of bounds for axis 0 with size 0
 
     result = lca_prommis.run_analysis.run_analysis (netl, 
-                                                    ps_uuid = '3cb6f1e9-cce3-4f31-8e93-dae36b3363d4', 
+                                                    ps_uuid = 'e5dc2e3a-44db-4a90-a3cf-ff8804ec488f', 
                                                     impact_method_uuid = '60cb71ff-0ef0-4e6c-9ce7-c885d921dd15', 
                                                     parameter_set = param_set_ref.parameters)
     result.wait_until_ready()
@@ -1050,6 +1061,8 @@ if __name__ == "__main__":
     """
 
     nf.define_node_script(nf.olca_node, olca_node_script)
+
+    nf.set_node_scriptMode(nf.olca_node, 'post') #setting script mode to post
 
     # TODO: Add error handling step here
     #       include a command line that uses run_standalone_node_script
@@ -1074,12 +1087,19 @@ if __name__ == "__main__":
     m = uky.build()
 
     uky.set_operating_conditions(m)
-
+    
     if "Leach liquid feed" in x:
         m.fs.leach_liquid_feed.flow_vol.fix(x["Leach liquid feed"])
+        logging.info("Leach liquid feed: %f", x["Leach liquid feed"])
+    else:
+        print ("Leach liquid feed not found in x")
 
     if "split_fraction" in x:
         m.fs.load_sep.split_fraction[0.0, 'recycle'].fix(x["split_fraction"])
+        logging.info("split_fraction: %f", x["split_fraction"])
+    else:
+        print ("split_fraction not found in x")
+    # [FH] turns out these decision variables are not assigned as inputs to prommis_node
 
     uky.set_scaling(m)
 
@@ -1157,12 +1177,14 @@ if __name__ == "__main__":
 
     nf.define_node_script(nf.prommis_node, prommis_node_script)
 
+    nf.set_node_scriptMode(nf.prommis_node, 'post')
+
     my_session = nf.create_session("/home/franc/foqus_wd") # create session
     
     problem = setup_optimizer(my_session, "NLopt") # first step in setting up optimizer
 
     # GWP, CED are openLCA node outputs, so pass olca_node.name
-    problem = create_problem_objective(problem, ["Global Warming Potential [AR6, 100 yr]", "Cumulative Energy Demand"], nf.olca_node.name) # create problem objective
+    problem = create_problem_objective(problem, ["Global Warming Potential [AR6, 100 yr]"], nf.olca_node.name) # create problem objective
 
     # TODO: create function to setup problem constraint (In progress)
 
