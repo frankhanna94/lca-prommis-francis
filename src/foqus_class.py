@@ -315,6 +315,32 @@ class NetlFoqus(object):
 
         return my_cm
     
+    def set_input_variables(self, node, var_name, var_value, var_min, var_max):
+        """
+        Set the input variables for a given node.
+        Parameters
+        ----------
+        node : gr.Node
+            The node to set the output variables for.
+        var_name : str
+            The name of the input variable.
+        var_value : float
+            The value of the input variable.
+        """
+        if not isinstance(node, gr.Node):
+            raise TypeError("node must be a valid FOQUS node object")
+        self.vars.append(nv.NodeVars(ipvname=var_name, dtype = float))
+        self.vars[-1].setValue(var_value)
+        self.vars[-1].setMin(var_min)
+        self.vars[-1].setMax(var_max)
+        self.vars[-1].scaling = "Linear"
+        if node is not None:
+            node.inVars[var_name] = self.vars[-1]
+        logging.info(
+            "Set input variable %s for node %s: value=%f" % (var_name, node.name, var_value)
+        )
+        return self.vars[-1]
+
     def initialize_intermediate_variables(self, producing_node, receiving_node):
         """
         Initialize the intermediate variables.
@@ -548,6 +574,40 @@ class NetlFoqus(object):
 
         return my_session
 
+    def validate_node_script(self, node):
+        """
+        Run a node script in standalone mode and validate it completes without errors.
+        
+        Parameters
+        ----------
+        node : gr.Node
+            The node to run the script for.
+        
+        Returns
+        -------
+        bool
+            True if script runs without errors, False otherwise.
+        """
+        try:
+            # Run the node script
+            self.run_standalone_node_script(node)
+            
+            # Check for calculation errors on the node
+            if node.calcError != 0:
+                logging.error(
+                    f"Node script execution failed for {node.name}. "
+                    f"Error code: {node.calcError}"
+                )
+                return False
+            
+            logging.info(f"Node script executed successfully for {node.name}")
+            return True
+            
+        except Exception as e:
+            logging.error(
+                f"Exception occurred while running node script for {node.name}: {str(e)}"
+            )
+            return False
 ###############################################################################
 # FUNCTIONS
 ###############################################################################
@@ -696,7 +756,7 @@ def initialize_decision_variables(nf_obj, m):
         # Execution string to get current value from model
         my_str = "m.%s.get_values().values()" % dv.ipvname
         my_val = [x for x in eval(my_str)][0]
-        # Use half and double for min/max
+        # Use +- 10% for max and min
         my_min = my_val * 0.9
         my_max = my_val * 1.1
         # Set decision variable properties
@@ -818,11 +878,14 @@ def setup_solver_options(problem,
     if use_defaults:
         problem.solverOptions[problem.solver] = {
         "Solver": "BOBYQA",   
-        "maxeval": 100,       
-        "maxtime": 60,        
-        "tolfunrel": 1e-4,    
-        "lower": 0.0,         
-        "upper": 10.0         
+        "maxeval": 0,       
+        "maxtime": 60,
+        "tolfunabs": 1e-9,    
+        "tolfunrel": 1e-9,
+        "tolxabs": 1e-9,
+        "tolxrel": 1e-9,
+        "lower": 0,         
+        "upper": 10    
         }
     else:
         # TODO: Add error handling for algorithm
@@ -839,10 +902,37 @@ def setup_solver_options(problem,
 
     return problem
 
+def validate_optimization_problem(problem, session): # Work still in progress - See TODOs at line 1300
+    """
+    Validate the optimization problem before running
+    """
+    logging.info(f"Decision Variables (v): {problem.v}")
+    logging.info(f"Number of Decision Variables: {len(problem.v)}")
+    
+    # Check if variables are properly defined
+    if len(problem.v) == 0:
+        raise ValueError("No decision variables defined in optimization problem!")
+    
+    # Check bounds
+    logging.info(f"Variable bounds: {problem.v}")
+    
+    # Check objective function
+    logging.info(f"Objective: {problem.obj}")
+    if len(problem.obj) == 0:
+        raise ValueError("No objective function defined!")
+    
+    # Check solver settings
+    if problem.solver is None:
+        raise ValueError("No solver selected!")
+    
+    logging.info(f"Selected Solver: {problem.solver}")
+    logging.info(f"Solver Options: {problem.solverOptions.get(problem.solver, {})}")
+
+
 def run_optimization(problem, session):
     """
-    This function runs the optimization
-    
+    This function runs the optimization with validation
+
     Parameters
     ----------
     problem : foqus_lib.framework.optimizer.problem
@@ -857,13 +947,16 @@ def run_optimization(problem, session):
     problem : foqus_lib.framework.optimizer.problem
         The problem object.
     """
-
+    
+    # Validate problem before running
+    validate_optimization_problem(problem, session)
+    
     my_solver = problem.run(session)
-    my_solver.join() # wait for results
+    my_solver.join()  # wait for results
     logging.info("Optimization completed")
 
     return my_solver, problem
-    
+
 #
 # SANDBOX
 #
@@ -907,10 +1000,12 @@ if __name__ == "__main__":
     my_var2 = "fs.load_sep.split_fraction"
     nf.add_decision_variable(my_var2)
 
-    # TODO: Need to set decision variables as input variables for prommis_node
-
     # Help with initializing decision variables
     foqus_class.initialize_decision_variables(nf, m)
+
+    # set decesion variables as input variables for prommis_node
+    for dv in nf.dv:
+        nf.set_input_variables(nf.prommis_node, dv.ipvname, dv.value, dv.min, dv.max)
 
     # Initialize intermediate variables
     nf.initialize_intermediate_variables(nf.prommis_node, nf.olca_node)
@@ -957,6 +1052,16 @@ if __name__ == "__main__":
                                                                             is_baseline)
     
 
+    # create new df/file to store run info
+    run_info = pd.DataFrame(columns=['item', 'description'])
+    run_info.loc[len(run_info)] = ['ps_uuid', ps_uuid]
+    run_info.loc[len(run_info)] = ['impact_method_uuid', impact_method_uuid]
+    run_info.loc[len(run_info)] = ['parameter_set_name', parameter_set_name]
+    run_info.to_csv(output_dir / "run_info.csv", index=False)
+
+    # create new df/file to store results
+    total_impacts.to_csv(output_dir / "total_impacts.csv", index=False)
+
     # save my_parameters to the output directory
     my_parameters.to_csv(output_dir / "my_parameters.csv", index=False)
 
@@ -972,21 +1077,9 @@ if __name__ == "__main__":
             total_impacts.loc[total_impacts['name'] == impact_category, 'amount'].values[0]
             )
         )
-    
-    # the ocla node script relies on my_parameters
-    # my parameters is updated after every run but is defined outside the the netlfoqus class
-    # and outside the olca_node_script
-    # to resolve this, my_parameters is stored in a dedicated output directory
-    # and is imported in the olca_node_script
-    # in olca_node_script, the parameters table is updated with a new column 
-    # after updating the parameters table, the parameters file in the output directory is updated
-    # TODO: test lines 988 - 991 separately (outside olca_node_script)
 
-    # TODO: each set of parameters should be saved in a new column
-    # TODO: modify update parameter to take the column name as input - 
-    #       currently it only considers parameters under column 'parameter_value'
-    #       the result is - when we store new parameters in a new column "parameter_value_1"
-    #       the update_parameters function will use the old parameters
+    # TODO: differentiate water input and water emissions in the lca_finalized_df
+
     olca_node_script = """
     # import dependencies
     from pathlib import Path
@@ -1005,16 +1098,12 @@ if __name__ == "__main__":
     params = my_parameters.copy() # get a copy of the parameters df
 
     # update the parameters table with the new parameter values
-    # make sure we're adding a new column to the parameters table
-    # gets the last column number and adds 1 to it
     existing = [
         int(m.group(1))
         for col in params.columns
         if (m := re.match(r"parameter_value_(\d+)", col))
     ]
-    # new column name
-    # next_n = max(existing, default=0) + 1
-    # new_col = f"parameter_value_{next_n}"
+    new_col = f"parameter_value_{max(existing, default=0) + 1}"
     # update the parameters table with the new parameter values
     for count, row in params.iterrows():
         desc = row['parameter_description']
@@ -1022,35 +1111,37 @@ if __name__ == "__main__":
         matching_keys = [k for k in x.keys() if k.startswith(desc)]
 
         if matching_keys and x[matching_keys[0]] is not None:
-            params.at[count, 'parameter_value'] = float(x[matching_keys[0]])
+            params.at[count, new_col] = float(x[matching_keys[0]])
         else:
-            params.at[count, 'parameter_value'] = 0
-
-    # for count, row in params.iterrows(): 
-    #     if x[row['parameter_description']] is not None: 
-    #         row[new_col] = float(x[row['parameter_description']]) 
-    #     else: 
-    #         row[new_col] = 0
+            params.at[count, new_col] = 0
     
     # save/overwrite the updated parameters table to the output directory
     params.to_csv(my_parameters_path, index=False)
 
-    # BUG: water input and water emissions should 
-    # be differentiated in the parameters description
+    params1 = params.copy()
+    params1 = params1[['parameter_name', 'parameter_description', new_col]]
+    params1.rename(columns={new_col: 'parameter_value'}, inplace=True)
 
+    # get run information - already initiated outside the olca_node_script
+    run_info_path = Path.home() / "output" / "run_info.csv"
+    run_info = pd.read_csv(run_info_path)
+    ps_uuid = run_info.loc[run_info['item'] == 'ps_uuid', 'description'].values[0]
+    impact_method_uuid = run_info.loc[run_info['item'] == 'impact_method_uuid', 'description'].values[0]
+    parameter_set_name = run_info.loc[run_info['item'] == 'parameter_set_name', 'description'].values[0]
+    
     # connect to openLCA
     netl = NetlOlca()
     netl.connect()
     netl.read()
 
     param_set_ref = lca_prommis.run_analysis.update_parameter ( netl, 
-                                                                ps_uuid = 'e5dc2e3a-44db-4a90-a3cf-ff8804ec488f', #BUG: ps_uuid is not defined inside the olca_node_script
-                                                                parameter_set_name = "Baseline", 
-                                                                new_parameter_set = params) #BUG: index 0 is out of bounds for axis 0 with size 0
+                                                                ps_uuid = ps_uuid,
+                                                                parameter_set_name = parameter_set_name, 
+                                                                new_parameter_set = params1) 
 
     result = lca_prommis.run_analysis.run_analysis (netl, 
-                                                    ps_uuid = 'e5dc2e3a-44db-4a90-a3cf-ff8804ec488f', 
-                                                    impact_method_uuid = '60cb71ff-0ef0-4e6c-9ce7-c885d921dd15', 
+                                                    ps_uuid = ps_uuid, 
+                                                    impact_method_uuid = impact_method_uuid, 
                                                     parameter_set = param_set_ref.parameters)
     result.wait_until_ready()
     total_impacts = lca_prommis.generate_total_results.generate_total_results(result)
@@ -1058,16 +1149,29 @@ if __name__ == "__main__":
     # save the total impacts to the node outputs
     for _, row in total_impacts.iterrows():
         f[row['name']] = row['amount']
+    
+    impacts_path = Path.home() / "output" / "impacts.csv"
+    if not impacts_path.exists():
+        impacts_path.parent.mkdir(parents=True, exist_ok=True)
+        total_impacts.to_csv(impacts_path, index=False)
+    else:
+        impacts = pd.read_csv(impacts_path)
+        amount_cols = [
+            col for col in impacts.columns
+            if re.fullmatch(r'amount_\d+', col)
+        ]
+        if amount_cols:
+            last_n = max(int(col.split('_')[1]) for col in amount_cols)
+            next_col = f'amount_{last_n + 1}'
+        else:
+            next_col = 'amount_1'
+        impacts [next_col] = total_impacts['amount'].to_numpy()
+        impacts.to_csv(impacts_path, index=False)
     """
 
     nf.define_node_script(nf.olca_node, olca_node_script)
 
-    nf.set_node_scriptMode(nf.olca_node, 'post') #setting script mode to post
-
-    # TODO: Add error handling step here
-    #       include a command line that uses run_standalone_node_script
-    #       if this retuns any errors, the code should be interrupted and tell the user
-    #       something is wrong with their node script
+    # nf.validate_node_script(nf.olca_node)
 
     prommis_node_script = """
     import os
@@ -1088,17 +1192,17 @@ if __name__ == "__main__":
 
     uky.set_operating_conditions(m)
     
-    if "Leach liquid feed" in x:
-        m.fs.leach_liquid_feed.flow_vol.fix(x["Leach liquid feed"])
-        logging.info("Leach liquid feed: %f", x["Leach liquid feed"])
+    if "fs.leach_liquid_feed.flow_vol" in x:
+        m.fs.leach_liquid_feed.flow_vol.fix(x["fs.leach_liquid_feed.flow_vol"])
+        logging.info("Leach liquid feed: %f", x["fs.leach_liquid_feed.flow_vol"])
     else:
         print ("Leach liquid feed not found in x")
 
-    if "split_fraction" in x:
-        m.fs.load_sep.split_fraction[0.0, 'recycle'].fix(x["split_fraction"])
-        logging.info("split_fraction: %f", x["split_fraction"])
+    if "fs.load_sep.split_fraction" in x:
+        m.fs.load_sep.split_fraction[0.0, 'recycle'].fix(x["fs.load_sep.split_fraction"])
+        logging.info("split_fraction: %f", x["fs.load_sep.split_fraction"])
     else:
-        print ("split_fraction not found in x")
+        print ("fs.load_sep.split_fraction not found in x")
     # [FH] turns out these decision variables are not assigned as inputs to prommis_node
 
     uky.set_scaling(m)
@@ -1177,7 +1281,7 @@ if __name__ == "__main__":
 
     nf.define_node_script(nf.prommis_node, prommis_node_script)
 
-    nf.set_node_scriptMode(nf.prommis_node, 'post')
+    # nf.validate_node_script(nf.prommis_node)
 
     my_session = nf.create_session("/home/franc/foqus_wd") # create session
     
@@ -1190,12 +1294,13 @@ if __name__ == "__main__":
 
     problem = setup_solver_options(problem, True) # setup solver options
 
-    my_solver, problem = run_optimization(problem, my_session) # run optimization
+    my_solver, problem = run_optimization(problem, my_session)  # run optimization
 
-    # Notes
-    # It seems that the whole code runs and does several iterations
-    # reviewing the parameters file I noticed that the parameters haven't changed from one iteration to another
-    # this can be caused by one of the following:
-    # 1. failed to set the boundaries of the decision variables - this causes many runs to fail and as a result the parameters to stay the same
-    # 2. the transfer of parameters from prommis_node to olca_node is failing and as a results the olca_node inputs are not being updated after every iteration
-    # 3. The selected decision variables simply do not make any difference  - this is not the case this time because the same dv were tested in the foqus GUI and they made a difference
+    # TODO:
+    # 1.    move the following functions to the netlfoqus class
+    #       setup_optimizer, create_problem_objective, setup_solver_options, run_optimization
+    # 2.    create a function to extract the optimization result
+    # 3.    add code to extract and store the decision variables values at every run
+    # 4.    create function to setup the problem constraint (alrady included above)
+    # 5.    fix function to validate the node script - the current function has bugs
+    # 6.    differentiate between water input and water emissions in lca_df_finalized
