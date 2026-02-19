@@ -28,7 +28,6 @@ from foqus_lib.framework.optimizer.problem import objectiveFunction
 
 import src as lca_prommis
 
-
 ##############################################################################
 # CLASSES
 ##############################################################################
@@ -109,11 +108,6 @@ class NetlFoqus(object):
         else:
             self.dv.append(nv.NodeVars(ipvname=var_name))
 
-            # All decision variables are assumed inputs to prommis node;
-            # add it if prommis_node exists; Python correctly links the object
-            # found in self.dv to the one in prommis_node.inVars
-            if self.prommis_node is not None:
-                self.prommis_node.inVars[var_name] = self.dv[-1]
 
     def add_edge(self, from_node, to_node):
         """Add an edge to the FOQUS flowsheet.
@@ -608,6 +602,374 @@ class NetlFoqus(object):
                 f"Exception occurred while running node script for {node.name}: {str(e)}"
             )
             return False
+    
+    def setup_optimizer(self, session, solver_name, source_node):
+        """
+        This function setups the optimizer for the session
+
+        It creates a problem object, assisngs the solver name, 
+        and appends the decision variables to the problem
+        
+        Parameters
+        ----------
+        session : foqus_lib.framework.session.session
+            The session object.
+        solver_name : str
+            The name of the solver.
+        source_node : nv.NodeVars
+            The node that has the inputs to be set as decision variables
+
+        Returns
+        -------
+        problem : foqus_lib.framework.optimizer.problem
+            The problem object.
+        """
+        # TODO: Add error handling for solver name
+        #       solver name should be checked for a list
+        problem = session.optProblem
+        problem.solver = solver_name
+        # HOTFIX: append decision variables rather than assign 
+        # them which results in overwriting an old dv with the following one 
+        for dv in self.dv:
+            problem.v.append(f"{source_node.name}.{dv.ipvname}")
+        
+        return problem
+
+    def create_problem_objective(self, problem, objectives_list, output_node, penalty_scale=10):
+        """
+        This function creates a problem objective
+        
+        Parameters
+        ----------
+        problem : foqus_lib.framework.optimizer.problem
+            The problem object.
+        objectives_list : list
+            The list of objective names.
+            example: ['GWP', 'CED']
+        output_node : nv.NodeVars
+            Name of the node whose outputs are used as objectives (e.g. "openLCA" for GWP/CED).
+        penalty_factor : float
+            The penalty scale factor (default: 10).
+
+        Returns
+        -------
+        problem : foqus_lib.framework.optimizer.problem
+            The problem object.
+        """
+        # Replace objectives so we don't accumulate stale ones from a previous run
+        problem.obj = []
+        # TODO: Add error handling for objectives list
+        #       each objective should be checked against 
+        #       the outputVars    
+        for objective in objectives_list:
+            objective_function = objectiveFunction()
+            # pycode is eval'd by FOQUS; use actual node and objective names in the string
+            objective_function.pycode = f'f["{output_node.name}"]["{objective}"]'
+            objective_function.penScale = penalty_scale
+            problem.obj.append(objective_function)
+        problem.objtype = problem.OBJ_TYPE_EVAL
+        return problem
+
+    def setup_solver_options(self, 
+                            problem, 
+                            use_defaults = False, 
+                            algorithm = None, 
+                            max_func_eval = None, 
+                            max_time = None, 
+                            tol_func_abs = None,
+                            tol_x_abs = None,
+                            tol_x_rel = None,
+                            tol_func_rel = None, 
+                            lower_bound = None, 
+                            upper_bound = None):
+
+        """
+        This function setups the solver options 
+        The user has the option to simply use the default solver options
+        or to specify the solver options manually
+        Parameters
+        ----------
+        use_defaults : bool
+            Whether to use the default solver options.
+        algorithm : str
+            The algorithm to use.
+        max_func_eval : int
+            The maximum number of function evaluations.
+        max_time : float
+            The maximum time in hours.
+        tol_func_abs : float
+            The absolute tolerance for the function.
+        tol_x_abs : float
+            The absolute tolerance for the variables.
+        tol_x_rel : float
+            The relative tolerance for the variables.
+        tol_func_rel : float
+            The relative tolerance for the function.
+        lower_bound : float
+            The lower bound.
+        upper_bound : float
+            The upper bound.
+
+        Returns
+        -------
+        problem : foqus_lib.framework.optimizer.problem
+            The problem object.
+        """
+
+        if use_defaults:
+            problem.solverOptions[problem.solver] = {
+            "Solver": "BOBYQA",   
+            "maxeval": 0,       
+            "maxtime": 60,
+            "tolfunabs": 1e-9,    
+            "tolfunrel": 1e-9,
+            "tolxabs": 1e-9,
+            "tolxrel": 1e-9,
+            "lower": 0,         
+            "upper": 10    
+            }
+        else:
+            # TODO: Add error handling for algorithm
+            #       each algorithm should be checked for a list
+            #       BOBYQA, COBYLA, DIRECT, etc.
+            problem.solverOptions[problem.solver] = {
+                "Solver": algorithm,
+                "maxeval": max_func_eval,
+                "maxtime": max_time,
+                "tolfunabs": tol_func_abs,
+                "tolfunrel": tol_func_rel,
+                "tolxabs": tol_x_abs,
+                "tolxrel": tol_x_rel,
+                "lower": lower_bound,
+                "upper": upper_bound
+            }
+
+        return problem
+
+    def run_optimization(self, problem, session):
+        """
+        This function runs the optimization with validation
+
+        Parameters
+        ----------
+        problem : foqus_lib.framework.optimizer.problem
+            The problem object.
+        session : foqus_lib.framework.session.session
+            The session object.
+
+        Returns
+        -------
+        solver : foqus_lib.framework.optimizer.optimization
+            The solver object.
+        problem : foqus_lib.framework.optimizer.problem
+            The problem object.
+        """
+        
+        my_solver = problem.run(session)
+        my_solver.join()  # wait for results
+        logging.info("Optimization completed")
+
+        return my_solver, problem
+
+###############################################################################
+# NODE SCRIPTS
+###############################################################################
+openlca_node_script = """
+# import dependencies
+from pathlib import Path
+import pandas as pd
+import olca_schema as olca
+import re
+import os
+
+from netlolca.NetlOlca import NetlOlca
+
+import src as lca_prommis
+
+# get the parameters file from the output directory
+my_parameters_path = Path.home() / "output" / "my_parameters.csv"
+my_parameters = pd.read_csv(my_parameters_path)
+params = my_parameters.copy() # get a copy of the parameters df
+
+# update the parameters table with the new parameter values
+existing = [
+    int(m.group(1))
+    for col in params.columns
+    if (m := re.match(r"parameter_value_(\d+)", col))
+]
+new_col = f"parameter_value_{max(existing, default=0) + 1}"
+# update the parameters table with the new parameter values
+for count, row in params.iterrows():
+    desc = row['parameter_description']
+
+    matching_keys = [k for k in x.keys() if k.startswith(desc)]
+
+    if matching_keys and x[matching_keys[0]] is not None:
+        params.at[count, new_col] = float(x[matching_keys[0]])
+    else:
+        params.at[count, new_col] = 0
+
+# save/overwrite the updated parameters table to the output directory
+params.to_csv(my_parameters_path, index=False)
+
+params1 = params.copy()
+params1 = params1[['parameter_name', 'parameter_description', new_col]]
+params1.rename(columns={new_col: 'parameter_value'}, inplace=True)
+
+# get run information - already initiated outside the olca_node_script
+run_info_path = Path.home() / "output" / "run_info.csv"
+run_info = pd.read_csv(run_info_path)
+ps_uuid = run_info.loc[run_info['item'] == 'ps_uuid', 'description'].values[0]
+impact_method_uuid = run_info.loc[run_info['item'] == 'impact_method_uuid', 'description'].values[0]
+parameter_set_name = run_info.loc[run_info['item'] == 'parameter_set_name', 'description'].values[0]
+
+# connect to openLCA
+netl = NetlOlca()
+netl.connect()
+netl.read()
+
+param_set_ref = lca_prommis.run_analysis.update_parameter ( netl, 
+                                                            ps_uuid = ps_uuid,
+                                                            parameter_set_name = parameter_set_name, 
+                                                            new_parameter_set = params1) 
+
+result = lca_prommis.run_analysis.run_analysis (netl, 
+                                                ps_uuid = ps_uuid, 
+                                                impact_method_uuid = impact_method_uuid, 
+                                                parameter_set = param_set_ref.parameters)
+result.wait_until_ready()
+total_impacts = lca_prommis.generate_total_results.generate_total_results(result)
+
+# save the total impacts to the node outputs
+for _, row in total_impacts.iterrows():
+    f[row['name']] = row['amount']
+
+impacts_path = Path.home() / "output" / "impacts.csv"
+if not impacts_path.exists():
+    impacts_path.parent.mkdir(parents=True, exist_ok=True)
+    total_impacts.to_csv(impacts_path, index=False)
+else:
+    impacts = pd.read_csv(impacts_path)
+    amount_cols = [
+        col for col in impacts.columns
+        if re.fullmatch(r'amount_\d+', col)
+    ]
+    if amount_cols:
+        last_n = max(int(col.split('_')[1]) for col in amount_cols)
+        next_col = f'amount_{last_n + 1}'
+    else:
+        next_col = 'amount_1'
+    impacts [next_col] = total_impacts['amount'].to_numpy()
+    impacts.to_csv(impacts_path, index=False)
+"""
+
+prommis_node_script = """
+import os
+import pandas as pd
+import olca_schema as olca
+from netlolca.NetlOlca import NetlOlca
+import prommis.uky.uky_flowsheet as uky 
+import src as lca_prommis
+
+from pyomo.environ import TransformationFactory
+from idaes.core.util.model_diagnostics import DiagnosticsToolbox
+from prommis.uky.costing.ree_plant_capcost import QGESSCostingData
+import prommis.uky.uky_flowsheet as uky
+
+home_dir = os.path.expanduser("~")
+
+m = uky.build()
+
+uky.set_operating_conditions(m)
+
+if "fs.leach_liquid_feed.flow_vol" in x:
+    m.fs.leach_liquid_feed.flow_vol.fix(x["fs.leach_liquid_feed.flow_vol"])
+    logging.info("Leach liquid feed: %f", x["fs.leach_liquid_feed.flow_vol"])
+else:
+    print ("Leach liquid feed not found in x")
+
+if "fs.load_sep.split_fraction" in x:
+    m.fs.load_sep.split_fraction[0.0, 'recycle'].fix(x["fs.load_sep.split_fraction"])
+    logging.info("split_fraction: %f", x["fs.load_sep.split_fraction"])
+else:
+    print ("fs.load_sep.split_fraction not found in x")
+# [FH] turns out these decision variables are not assigned as inputs to prommis_node
+
+uky.set_scaling(m)
+
+scaling = TransformationFactory("core.scale_model")
+scaled_model = scaling.create_using(m, rename=False)
+
+if uky.degrees_of_freedom(scaled_model) != 0:
+    raise AssertionError("Degrees of freedom != 0")
+
+uky.initialize_system(scaled_model)
+uky.solve_system(scaled_model)
+
+uky.fix_organic_recycle(scaled_model)
+scaled_results = uky.solve_system(scaled_model)
+
+if not uky.check_optimal_termination(scaled_results):
+    raise RuntimeError("Solver failed to terminate optimally")
+
+# Propagate results back to original model
+results = scaling.propagate_solution(scaled_model, m)
+
+# 5. Add Costing (Optional, but likely needed for optimization)
+uky.add_costing(m)
+
+# Costing initialization
+QGESSCostingData.costing_initialization(m.fs.costing)
+QGESSCostingData.initialize_fixed_OM_costs(m.fs.costing)
+QGESSCostingData.initialize_variable_OM_costs(m.fs.costing)
+
+# Final solve with costing
+uky.solve_system(m)
+
+prommis_data = lca_prommis.data_lca.get_lca_df(m)
+
+df = lca_prommis.convert_lca.convert_flows_to_lca_units(prommis_data, hours=1, mol_to_kg=True, water_unit='m3')
+
+REO_list = [
+    "Yttrium Oxide",
+    "Lanthanum Oxide",
+    "Cerium Oxide",
+    "Praseodymium Oxide",
+    "Neodymium Oxide",
+    "Samarium Oxide",
+    "Gadolinium Oxide",
+    "Dysprosium Oxide",
+]
+
+df = lca_prommis.final_lca.merge_flows(df, merge_source='Solid Feed', new_flow_name='374 ppm REO Feed', value_2_merge=REO_list)
+
+
+df = lca_prommis.final_lca.merge_flows(df, merge_source='Roaster Product', new_flow_name='73.4% REO Product')
+
+
+df = lca_prommis.final_lca.merge_flows(df, merge_source='Wastewater', new_flow_name='Wastewater', merge_column='Category') 
+
+df = lca_prommis.final_lca.merge_flows(df, merge_source='Solid Waste', new_flow_name='Solid Waste', merge_column='Category') 
+
+finalized_df = lca_prommis.final_lca.finalize_df(
+        df=df, 
+        reference_flow='73.4% REO Product', 
+        reference_source='Roaster Product',
+        water_type='raw fresh water'
+    )
+
+output_dir = os.path.join(home_dir, 'output')
+
+if not os.path.exists(output_dir):
+    os.makedirs(output_dir)
+
+finalized_df.to_csv(os.path.join(output_dir, "finalized_df.csv"), index=False)
+
+for _, row in finalized_df.iterrows():
+    f[row['Flow_Name']] = row['LCA_Amount']
+
+"""
+
 ###############################################################################
 # FUNCTIONS
 ###############################################################################
@@ -773,135 +1135,6 @@ def initialize_decision_variables(nf_obj, m):
             )
         )
 
-def setup_optimizer(session, solver_name):
-    """
-    This function setups the optimizer for the session
-
-    It creates a problem object, assisngs the solver name, 
-    and appends the decision variables to the problem
-    
-    Parameters
-    ----------
-    session : foqus_lib.framework.session.session
-        The session object.
-    solver_name : str
-        The name of the solver.
-
-    Returns
-    -------
-    problem : foqus_lib.framework.optimizer.problem
-        The problem object.
-    """
-    # TODO: Add error handling for solver name
-    #       solver name should be checked for a list
-    problem = session.optProblem
-    problem.solver = solver_name
-    # HOTFIX: append decision variables rather than assign 
-    # them which results in overwriting an old dv with the following one 
-    for dv in nf.dv:
-        problem.v.append(f"{nf.prommis_node.name}.{dv.ipvname}")
-    return problem
-
-def create_problem_objective(problem, objectives_list, node_name, penalty_scale=10):
-    """
-    This function creates a problem objective
-    
-    Parameters
-    ----------
-    problem : foqus_lib.framework.optimizer.problem
-        The problem object.
-    objectives_list : list
-        The list of objective names.
-        example: ['GWP', 'CED']
-    node_name : str
-        Name of the node whose outputs are used as objectives (e.g. "openLCA" for GWP/CED).
-    penalty_factor : float
-        The penalty scale factor (default: 10).
-
-    Returns
-    -------
-    problem : foqus_lib.framework.optimizer.problem
-        The problem object.
-    """
-    # Replace objectives so we don't accumulate stale ones from a previous run
-    problem.obj = []
-    # TODO: Add error handling for objectives list
-    #       each objective should be checked against 
-    #       the outputVars    
-    for objective in objectives_list:
-        objective_function = objectiveFunction()
-        # pycode is eval'd by FOQUS; use actual node and objective names in the string
-        objective_function.pycode = f'f["{node_name}"]["{objective}"]'
-        objective_function.penScale = penalty_scale
-        problem.obj.append(objective_function)
-    problem.objtype = problem.OBJ_TYPE_EVAL
-    return problem
-
-#def create_problem_constraint() # In progress
-
-def setup_solver_options(problem, 
-                         use_defaults = False, 
-                         algorithm = None, 
-                         max_func_eval = None, 
-                         max_time = None, 
-                         tol_func_rel = None, 
-                         lower_bound = None, 
-                         upper_bound = None):
-
-    """
-    This function setups the solver options 
-    The user has the option to simply use the default solver options
-    or to specify the solver options manually
-    Parameters
-    ----------
-    use_defaults : bool
-        Whether to use the default solver options.
-    algorithm : str
-        The algorithm to use.
-    max_func_eval : int
-        The maximum number of function evaluations.
-    max_time : float
-        The maximum time in hours.
-    tol_func_rel : float
-        The relative tolerance for the function.
-    lower_bound : float
-        The lower bound.
-    upper_bound : float
-        The upper bound.
-
-    Returns
-    -------
-    problem : foqus_lib.framework.optimizer.problem
-        The problem object.
-    """
-
-    if use_defaults:
-        problem.solverOptions[problem.solver] = {
-        "Solver": "BOBYQA",   
-        "maxeval": 0,       
-        "maxtime": 60,
-        "tolfunabs": 1e-9,    
-        "tolfunrel": 1e-9,
-        "tolxabs": 1e-9,
-        "tolxrel": 1e-9,
-        "lower": 0,         
-        "upper": 10    
-        }
-    else:
-        # TODO: Add error handling for algorithm
-        #       each algorithm should be checked for a list
-        #       BOBYQA, COBYLA, DIRECT, etc.
-        problem.solverOptions[problem.solver] = {
-            "Solver": algorithm,
-            "maxeval": max_func_eval,
-            "maxtime": max_time,
-            "tolfunrel": tol_func_rel,
-            "lower": lower_bound,
-            "upper": upper_bound
-        }
-
-    return problem
-
 def validate_optimization_problem(problem, session): # Work still in progress - See TODOs at line 1300
     """
     Validate the optimization problem before running
@@ -929,34 +1162,6 @@ def validate_optimization_problem(problem, session): # Work still in progress - 
     logging.info(f"Solver Options: {problem.solverOptions.get(problem.solver, {})}")
 
 
-def run_optimization(problem, session):
-    """
-    This function runs the optimization with validation
-
-    Parameters
-    ----------
-    problem : foqus_lib.framework.optimizer.problem
-        The problem object.
-    session : foqus_lib.framework.session.session
-        The session object.
-
-    Returns
-    -------
-    solver : foqus_lib.framework.optimizer.optimization
-        The solver object.
-    problem : foqus_lib.framework.optimizer.problem
-        The problem object.
-    """
-    
-    # Validate problem before running
-    validate_optimization_problem(problem, session)
-    
-    my_solver = problem.run(session)
-    my_solver.join()  # wait for results
-    logging.info("Optimization completed")
-
-    return my_solver, problem
-
 #
 # SANDBOX
 #
@@ -964,6 +1169,7 @@ if __name__ == "__main__":
     # Import and initialize NetlFoqus w/ UKy flowsheet
     import src.foqus_class as foqus_class
     from src.foqus_class import NetlFoqus
+    from src.foqus_class import openlca_node_script, prommis_node_script
     import os
     import logging
     from pathlib import Path
@@ -982,7 +1188,6 @@ if __name__ == "__main__":
     from foqus_lib.framework.uq.Distribution import Distribution
     from foqus_lib.framework.session.session import session
     from foqus_lib.framework.optimizer.problem import objectiveFunction
-
     import src as lca_prommis
 
     output_dir = Path.home() / "output" 
@@ -1080,204 +1285,9 @@ if __name__ == "__main__":
 
     # TODO: differentiate water input and water emissions in the lca_finalized_df
 
-    olca_node_script = """
-    # import dependencies
-    from pathlib import Path
-    import pandas as pd
-    import olca_schema as olca
-    import re
-    import os
-
-    from netlolca.NetlOlca import NetlOlca
-
-    import src as lca_prommis
-
-    # get the parameters file from the output directory
-    my_parameters_path = Path.home() / "output" / "my_parameters.csv"
-    my_parameters = pd.read_csv(my_parameters_path)
-    params = my_parameters.copy() # get a copy of the parameters df
-
-    # update the parameters table with the new parameter values
-    existing = [
-        int(m.group(1))
-        for col in params.columns
-        if (m := re.match(r"parameter_value_(\d+)", col))
-    ]
-    new_col = f"parameter_value_{max(existing, default=0) + 1}"
-    # update the parameters table with the new parameter values
-    for count, row in params.iterrows():
-        desc = row['parameter_description']
-
-        matching_keys = [k for k in x.keys() if k.startswith(desc)]
-
-        if matching_keys and x[matching_keys[0]] is not None:
-            params.at[count, new_col] = float(x[matching_keys[0]])
-        else:
-            params.at[count, new_col] = 0
-    
-    # save/overwrite the updated parameters table to the output directory
-    params.to_csv(my_parameters_path, index=False)
-
-    params1 = params.copy()
-    params1 = params1[['parameter_name', 'parameter_description', new_col]]
-    params1.rename(columns={new_col: 'parameter_value'}, inplace=True)
-
-    # get run information - already initiated outside the olca_node_script
-    run_info_path = Path.home() / "output" / "run_info.csv"
-    run_info = pd.read_csv(run_info_path)
-    ps_uuid = run_info.loc[run_info['item'] == 'ps_uuid', 'description'].values[0]
-    impact_method_uuid = run_info.loc[run_info['item'] == 'impact_method_uuid', 'description'].values[0]
-    parameter_set_name = run_info.loc[run_info['item'] == 'parameter_set_name', 'description'].values[0]
-    
-    # connect to openLCA
-    netl = NetlOlca()
-    netl.connect()
-    netl.read()
-
-    param_set_ref = lca_prommis.run_analysis.update_parameter ( netl, 
-                                                                ps_uuid = ps_uuid,
-                                                                parameter_set_name = parameter_set_name, 
-                                                                new_parameter_set = params1) 
-
-    result = lca_prommis.run_analysis.run_analysis (netl, 
-                                                    ps_uuid = ps_uuid, 
-                                                    impact_method_uuid = impact_method_uuid, 
-                                                    parameter_set = param_set_ref.parameters)
-    result.wait_until_ready()
-    total_impacts = lca_prommis.generate_total_results.generate_total_results(result)
-
-    # save the total impacts to the node outputs
-    for _, row in total_impacts.iterrows():
-        f[row['name']] = row['amount']
-    
-    impacts_path = Path.home() / "output" / "impacts.csv"
-    if not impacts_path.exists():
-        impacts_path.parent.mkdir(parents=True, exist_ok=True)
-        total_impacts.to_csv(impacts_path, index=False)
-    else:
-        impacts = pd.read_csv(impacts_path)
-        amount_cols = [
-            col for col in impacts.columns
-            if re.fullmatch(r'amount_\d+', col)
-        ]
-        if amount_cols:
-            last_n = max(int(col.split('_')[1]) for col in amount_cols)
-            next_col = f'amount_{last_n + 1}'
-        else:
-            next_col = 'amount_1'
-        impacts [next_col] = total_impacts['amount'].to_numpy()
-        impacts.to_csv(impacts_path, index=False)
-    """
-
-    nf.define_node_script(nf.olca_node, olca_node_script)
+    nf.define_node_script(nf.olca_node, openlca_node_script)
 
     # nf.validate_node_script(nf.olca_node)
-
-    prommis_node_script = """
-    import os
-    import pandas as pd
-    import olca_schema as olca
-    from netlolca.NetlOlca import NetlOlca
-    import prommis.uky.uky_flowsheet as uky 
-    import src as lca_prommis
-
-    from pyomo.environ import TransformationFactory
-    from idaes.core.util.model_diagnostics import DiagnosticsToolbox
-    from prommis.uky.costing.ree_plant_capcost import QGESSCostingData
-    import prommis.uky.uky_flowsheet as uky
-
-    home_dir = os.path.expanduser("~")
-
-    m = uky.build()
-
-    uky.set_operating_conditions(m)
-    
-    if "fs.leach_liquid_feed.flow_vol" in x:
-        m.fs.leach_liquid_feed.flow_vol.fix(x["fs.leach_liquid_feed.flow_vol"])
-        logging.info("Leach liquid feed: %f", x["fs.leach_liquid_feed.flow_vol"])
-    else:
-        print ("Leach liquid feed not found in x")
-
-    if "fs.load_sep.split_fraction" in x:
-        m.fs.load_sep.split_fraction[0.0, 'recycle'].fix(x["fs.load_sep.split_fraction"])
-        logging.info("split_fraction: %f", x["fs.load_sep.split_fraction"])
-    else:
-        print ("fs.load_sep.split_fraction not found in x")
-    # [FH] turns out these decision variables are not assigned as inputs to prommis_node
-
-    uky.set_scaling(m)
-
-    scaling = TransformationFactory("core.scale_model")
-    scaled_model = scaling.create_using(m, rename=False)
-
-    if uky.degrees_of_freedom(scaled_model) != 0:
-        raise AssertionError("Degrees of freedom != 0")
-
-    uky.initialize_system(scaled_model)
-    uky.solve_system(scaled_model)
-
-    uky.fix_organic_recycle(scaled_model)
-    scaled_results = uky.solve_system(scaled_model)
-
-    if not uky.check_optimal_termination(scaled_results):
-        raise RuntimeError("Solver failed to terminate optimally")
-
-    # Propagate results back to original model
-    results = scaling.propagate_solution(scaled_model, m)
-
-    # 5. Add Costing (Optional, but likely needed for optimization)
-    uky.add_costing(m)
-
-    # Costing initialization
-    QGESSCostingData.costing_initialization(m.fs.costing)
-    QGESSCostingData.initialize_fixed_OM_costs(m.fs.costing)
-    QGESSCostingData.initialize_variable_OM_costs(m.fs.costing)
-
-    # Final solve with costing
-    uky.solve_system(m)
-
-    prommis_data = lca_prommis.data_lca.get_lca_df(m)
-
-    df = lca_prommis.convert_lca.convert_flows_to_lca_units(prommis_data, hours=1, mol_to_kg=True, water_unit='m3')
-
-    REO_list = [
-        "Yttrium Oxide",
-        "Lanthanum Oxide",
-        "Cerium Oxide",
-        "Praseodymium Oxide",
-        "Neodymium Oxide",
-        "Samarium Oxide",
-        "Gadolinium Oxide",
-        "Dysprosium Oxide",
-    ]
-
-    df = lca_prommis.final_lca.merge_flows(df, merge_source='Solid Feed', new_flow_name='374 ppm REO Feed', value_2_merge=REO_list)
-
-
-    df = lca_prommis.final_lca.merge_flows(df, merge_source='Roaster Product', new_flow_name='73.4% REO Product')
-
-
-    df = lca_prommis.final_lca.merge_flows(df, merge_source='Wastewater', new_flow_name='Wastewater', merge_column='Category') 
-
-    df = lca_prommis.final_lca.merge_flows(df, merge_source='Solid Waste', new_flow_name='Solid Waste', merge_column='Category') 
-
-    finalized_df = lca_prommis.final_lca.finalize_df(
-            df=df, 
-            reference_flow='73.4% REO Product', 
-            reference_source='Roaster Product',
-            water_type='raw fresh water'
-        )
-
-    output_dir = os.path.join(home_dir, 'output')
-
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-
-    finalized_df.to_csv(os.path.join(output_dir, "finalized_df.csv"), index=False)
-
-    for _, row in finalized_df.iterrows():
-        f[row['Flow_Name']] = row['LCA_Amount']
-    """
 
     nf.define_node_script(nf.prommis_node, prommis_node_script)
 
@@ -1285,22 +1295,30 @@ if __name__ == "__main__":
 
     my_session = nf.create_session("/home/franc/foqus_wd") # create session
     
-    problem = setup_optimizer(my_session, "NLopt") # first step in setting up optimizer
+    problem = nf.setup_optimizer(my_session, "NLopt", nf.prommis_node) # first step in setting up optimizer
 
     # GWP, CED are openLCA node outputs, so pass olca_node.name
-    problem = create_problem_objective(problem, ["Global Warming Potential [AR6, 100 yr]"], nf.olca_node.name) # create problem objective
+    problem = nf.create_problem_objective(problem, 
+                                        ["Global Warming Potential [AR6, 100 yr]"], 
+                                        nf.olca_node,
+                                        penalty_scale=10) # create problem objective
 
     # TODO: create function to setup problem constraint (In progress)
 
-    problem = setup_solver_options(problem, True) # setup solver options
+    problem = nf.setup_solver_options(problem, True) # setup solver options
 
-    my_solver, problem = run_optimization(problem, my_session)  # run optimization
+    my_solver, problem = nf.run_optimization(problem, my_session)  # run optimization
 
     # TODO:
-    # 1.    move the following functions to the netlfoqus class
-    #       setup_optimizer, create_problem_objective, setup_solver_options, run_optimization
-    # 2.    create a function to extract the optimization result
-    # 3.    add code to extract and store the decision variables values at every run
-    # 4.    create function to setup the problem constraint (alrady included above)
-    # 5.    fix function to validate the node script - the current function has bugs
-    # 6.    differentiate between water input and water emissions in lca_df_finalized
+    # 1.    create a function to extract the optimization result
+    # 2.    add code to extract and store the decision variables values at every run
+    # 3.    create function to setup the problem constraint (alrady included above)
+    # 4.    fix function to validate the node script - the current function has bugs
+    # 5.    differentiate between water input and water emissions in lca_df_finalized
+    # 6.    should the data extraction functionality be part of the netlfoqus class or 
+    #       remain a separate code included in the jupter notebook and node scripts?
+    # 7.    setup_optimizer: add error handling for solver name (should be checked for a list)
+    # 8.    create_problem_objective: Add error handling for objectives list each objective 
+    #       should be checked against the outputVars 
+    # 9.    setup_solver_options: Add error handling for algorithm each algorithm should 
+    #       be checked for a list BOBYQA, COBYLA, DIRECT, etc. 
