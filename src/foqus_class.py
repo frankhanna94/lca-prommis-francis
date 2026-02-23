@@ -26,6 +26,7 @@ from foqus_lib.framework.uq.Distribution import Distribution
 from foqus_lib.framework.session.session import session
 from foqus_lib.framework.optimizer.problem import objectiveFunction
 import foqus_lib.framework.optimizer.NLopt as nlopt
+from foqus_lib.framework.optimizer.problem import inequalityConstraint
 
 import src as lca_prommis
 
@@ -627,6 +628,7 @@ class NetlFoqus(object):
         """
         # TODO: Add error handling for solver name
         #       solver name should be checked for a list
+        #       this class currently only supports NLopt
         problem = session.optProblem
         problem.solver = solver_name
         # HOTFIX: append decision variables rather than assign 
@@ -669,7 +671,43 @@ class NetlFoqus(object):
         problem.objtype = problem.OBJ_TYPE_EVAL
         return problem
 
-    def setup_solver_options(self, 
+    def create_problem_constraint ( self, 
+                                    problem, 
+                                    pycode,
+                                    penalty_factor=10,
+                                    form = "Linear"):
+        """
+        This function creates a problem constraint and appends it to the problem
+
+        Parameters
+        ----------
+        problem : foqus_lib.framework.optimizer.problem
+            The problem object.
+        pycode : str
+            The python code to be used as a constraint.
+        penalty_factor : float
+            The penalty scale factor (default: 10).
+        form : str
+            The form of the constraint (default: "Linear").
+
+        Returns
+        -------
+        problem : foqus_lib.framework.optimizer.problem
+            The problem object.
+        """
+
+        forms = [None, "Linear", "Quadratic", "Step"]
+
+        const = inequalityConstraint()
+        const.pycode = pycode
+        const.penalty = penalty_factor
+        const.penForm = form
+
+        problem.g.append(const)
+
+        return problem
+
+    def setup_nlopt_solver_options(self, 
                             problem, 
                             use_defaults = False, 
                             algorithm = None, 
@@ -865,6 +903,7 @@ else:
 
 prommis_node_script = """
 import os
+import re
 import pandas as pd
 import olca_schema as olca
 from netlolca.NetlOlca import NetlOlca
@@ -893,7 +932,21 @@ if "fs.load_sep.split_fraction" in x:
     logging.info("split_fraction: %f", x["fs.load_sep.split_fraction"])
 else:
     print ("fs.load_sep.split_fraction not found in x")
-# [FH] turns out these decision variables are not assigned as inputs to prommis_node
+
+# store new decision variable values in the output folder
+dv_df = pd.read_csv(os.path.join(home_dir, "output", "decision_variables.csv"))
+# get new col name
+existing = [
+    int(n.group(1))
+    for col in dv_df.columns
+    if (n := re.match(r"value_(\d+)", col))
+]
+new_col = f"value_{max(existing, default=0) + 1}"
+for count, row in dv_df.iterrows():
+    dv_name = row['variable_name']
+    if dv_name in x:
+        dv_df.at[count, new_col] = x[dv_name]
+dv_df.to_csv(os.path.join(home_dir, "output", "decision_variables.csv"), index = False)
 
 uky.set_scaling(m)
 
@@ -1189,6 +1242,8 @@ if __name__ == "__main__":
     from foqus_lib.framework.session.session import session
     from foqus_lib.framework.optimizer.problem import objectiveFunction
     import src as lca_prommis
+    import foqus_lib.framework.optimizer.NLopt as nlopt
+    from foqus_lib.framework.optimizer.problem import inequalityConstraint
 
     output_dir = Path.home() / "output" 
     if not output_dir.exists():
@@ -1207,6 +1262,20 @@ if __name__ == "__main__":
 
     # Help with initializing decision variables
     foqus_class.initialize_decision_variables(nf, m)
+    
+    # Store decision variable information in a dataframe and save to output directory
+    dv_data = []
+    for dv in nf.dv:
+        dv_data.append({
+            'variable_name': dv.ipvname,
+            'value': dv.value,
+            'min': dv.min,
+            'max': dv.max,
+            'scaling': dv.scaling
+        })
+
+    dv_df = pd.DataFrame(dv_data)
+    dv_df.to_csv(output_dir / "decision_variables.csv", index=False)
 
     # set decesion variables as input variables for prommis_node
     for dv in nf.dv:
@@ -1305,20 +1374,38 @@ if __name__ == "__main__":
 
     # TODO: create function to setup problem constraint (In progress)
 
-    problem = nf.setup_solver_options(problem, True) # setup solver options
+    problem = nf.setup_nlopt_solver_options(problem, True) # setup solver options
 
     my_solver, problem = nf.run_optimization(problem, my_session)  # run optimization
 
     # TODO:
-    # 1.    create a function to extract the optimization result
-    # 2.    add code to extract and store the decision variables values at every run
-    # 3.    create function to setup the problem constraint (alrady included above)
-    # 4.    fix function to validate the node script - the current function has bugs
-    # 5.    differentiate between water input and water emissions in lca_df_finalized
-    # 6.    should the data extraction functionality be part of the netlfoqus class or 
+    # 1.    create a function to extract the optimization result and pass the final                 --> In progress
+    #       result to openLCA 
+
+    # 2.    add code to extract and store the decision variables values at every run                --> Done
+
+    # 3.    create function to setup the problem constraint (alrady included above)                 --> Done
+    #       Issue
+    #       =====
+    #       The issue with this method is that it requires the user to write a python code          --> TBD
+    #       to define the constraint - as such this is not ideal. 
+    #       example: py_code = f["olca_node"]["Cumulative Energy Demand"] < 100
+    #       What even makes this method more challenging is the need to have the constraint 
+    #       variables included in the node outputs - which is autmatically true for the 
+    #       olca_node but should be defined separately for the prommis_node.
+
+    # 4.    fix function to validate the node script - the current function has bugs                --> In progress
+
+    # 5.    differentiate between water input and water emissions in lca_df_finalized               --> Done
+
+    # 6.    should the data extraction functionality be part of the netlfoqus class or              --> TBD
     #       remain a separate code included in the jupter notebook and node scripts?
-    # 7.    setup_optimizer: add error handling for solver name (should be checked for a list)      --> 
+
+    # 7.    setup_optimizer: add error handling for solver name (should be checked for a list)      --> Skipped for now
+    #                                                                                                   since we ony need NLopt
+
     # 8.    create_problem_objective: Add error handling for objectives list each objective         --> Done 
     #       should be checked against the outputVars 
-    # 9.    setup_solver_options: Add error handling for algorithm each algorithm should 
+
+    # 9.    setup_nlopt_solver_options: Add error handling for algorithm each algorithm should 
     #       be checked for a list BOBYQA, COBYLA, DIRECT, etc.                                      --> Done
