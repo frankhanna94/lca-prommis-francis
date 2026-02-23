@@ -25,6 +25,7 @@ import foqus_lib.framework.graph.nodeVars as nv
 from foqus_lib.framework.uq.Distribution import Distribution
 from foqus_lib.framework.session.session import session
 from foqus_lib.framework.optimizer.problem import objectiveFunction
+import foqus_lib.framework.optimizer.NLopt as nlopt
 
 import src as lca_prommis
 
@@ -656,17 +657,15 @@ class NetlFoqus(object):
         problem : foqus_lib.framework.optimizer.problem
             The problem object.
         """
-        # Replace objectives so we don't accumulate stale ones from a previous run
-        problem.obj = []
-        # TODO: Add error handling for objectives list
-        #       each objective should be checked against 
-        #       the outputVars    
+        problem.obj = []  
         for objective in objectives_list:
-            objective_function = objectiveFunction()
-            # pycode is eval'd by FOQUS; use actual node and objective names in the string
-            objective_function.pycode = f'f["{output_node.name}"]["{objective}"]'
-            objective_function.penScale = penalty_scale
-            problem.obj.append(objective_function)
+            if objective in list(output_node.outVars.keys()):
+                objective_function = objectiveFunction()
+                objective_function.pycode = f'f["{output_node.name}"]["{objective}"]'
+                objective_function.penScale = penalty_scale
+                problem.obj.append(objective_function)
+            else:
+                raise ValueError(f"Objective {objective} not found in {output_node.name}.outVars")
         problem.objtype = problem.OBJ_TYPE_EVAL
         return problem
 
@@ -729,9 +728,10 @@ class NetlFoqus(object):
             "upper": 10    
             }
         else:
-            # TODO: Add error handling for algorithm
-            #       each algorithm should be checked for a list
-            #       BOBYQA, COBYLA, DIRECT, etc.
+            optim = nlopt.opt()
+            valid_v = optim.options["Solver"].validValues
+            if algorithm not in valid_v:
+                raise ValueError(f"Invalid algorithm: {algorithm}. Valid algorithms are: {valid_v}")
             problem.solverOptions[problem.solver] = {
                 "Solver": algorithm,
                 "maxeval": max_func_eval,
@@ -1317,8 +1317,8 @@ if __name__ == "__main__":
     # 5.    differentiate between water input and water emissions in lca_df_finalized
     # 6.    should the data extraction functionality be part of the netlfoqus class or 
     #       remain a separate code included in the jupter notebook and node scripts?
-    # 7.    setup_optimizer: add error handling for solver name (should be checked for a list)
-    # 8.    create_problem_objective: Add error handling for objectives list each objective 
+    # 7.    setup_optimizer: add error handling for solver name (should be checked for a list)      --> 
+    # 8.    create_problem_objective: Add error handling for objectives list each objective         --> Done 
     #       should be checked against the outputVars 
     # 9.    setup_solver_options: Add error handling for algorithm each algorithm should 
-    #       be checked for a list BOBYQA, COBYLA, DIRECT, etc. 
+    #       be checked for a list BOBYQA, COBYLA, DIRECT, etc.                                      --> Done
