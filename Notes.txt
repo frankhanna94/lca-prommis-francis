@@ -763,3 +763,70 @@ Notes on setting up the optimizer
 *   wait for the optimization to completes                                      --> Done
     solver_1.join()
     print ("Optimization Complete")
+
+2/25/2026
+---------
+
+Notes on penalty scale and penalty factor
+
+In contrained optimizations
+    * If a constraint is met, the objective function remains the same.
+    * If a constraint is not met, the objective function is modified
+        => it is penalized
+        In FOQUS, we have inquality constraints of the form g(x) <= 0
+        where the user defines what g(x) is (using a Python expression).
+        If a constraint is not met, the objective function is revised:
+            min Obj(x, a) = f(x) + pf
+            where   f(x) is the objective function
+                    pf is the penalty form and is a function of (a) and (g(x))
+
+Penalty Factor: 
+    - the penalty factor is assigned to the constraint
+    - the penalty form (f(a,g(x))) depends on the constraint form selected by the user
+    - constraint forms options: Linear, Quadratic, Step -- 
+    - see https://foqus.readthedocs.io/en/stable/chapt_opt/reference/optimization.html
+        for more infomation on the different constraint forms
+    - What is the significance of the penalty factor?
+      The penalty is used to give a certain cost for violation of the constraints
+        * If the penalty factor is too high
+            The new objective function will be dominated by the constraint violation
+            The algorithm behavior --> focus on searching for feasibility 
+
+        * If the penalty factor is too low
+            The objective function will be dominated by the main objective
+            The algorithm can - in some way - ignore the constraints
+
+Penalty Scale:
+
+- In the case where we have multiple objectives, there is a possibility that 
+    these objectives have different scales/magnitudes. For example obj_1 ranges between 10 and 15
+    and obj_2 ranges between 0.1 and 0.2
+- In this case we need to define a penalty scale for each objective.
+    This helps the solver apply the constraint violation penalty differently to 
+    these different objective functions. 
+
+    Special cases:
+    - Single objective optimization with constraints
+        * Penalty Scale = 1
+    - Single objective optimization without constraints
+        * Penalty Scale has no effect on the optimiation results
+    - Multiple objective optimization without constraints
+        * Penalty Scale has no effect on the optimiation results
+
+- How to set the penalty factor?
+    - There is no default value for penalty factor
+    - [FH] personal thoughts: 
+        * This can be an iterative process
+        * Start with a low penalty factor --> allows the algorithm to find many working solutions
+        * Gradually increase the penalty factor to force the algorithm into a solution that prioritizes 
+            feasibility while meeting objective
+
+- How to set the penalty scale?
+    - Default is 10
+    - Methodology - not explicitly explained in FOQUS Documentation
+
+References:
+    1- https://foqus.readthedocs.io/en/stable/chapt_opt/reference/optimization.html
+    2- https://app.readthedocs.org/projects/foqus/downloads/pdf/latest/
+    3- https://doi.org/10.1016/j.egypro.2014.11.113
+    

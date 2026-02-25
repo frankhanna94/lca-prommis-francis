@@ -638,7 +638,7 @@ class NetlFoqus(object):
         
         return problem
 
-    def create_problem_objective(self, problem, objectives_list, output_node, penalty_scale=10):
+    def create_problem_objective(self, problem, objectives_list, output_node, failure_val, penalty_scale):
         """
         This function creates a problem objective
         
@@ -651,8 +651,13 @@ class NetlFoqus(object):
             example: ['GWP', 'CED']
         output_node : nv.NodeVars
             Name of the node whose outputs are used as objectives (e.g. "openLCA" for GWP/CED).
-        penalty_factor : float
-            The penalty scale factor (default: 10).
+        penalty_scale : list
+            The penalty scale for each objective.
+            example: [10, 10]
+        failure_val : list
+            The value for failure for each objective.
+            example: [10000000, 10000000]
+            Note: the failure value should be higher than the expected highest value for a successful objective.
 
         Returns
         -------
@@ -660,11 +665,12 @@ class NetlFoqus(object):
             The problem object.
         """
         problem.obj = []  
-        for objective in objectives_list:
+        for idx, objective in enumerate(objectives_list):
             if objective in list(output_node.outVars.keys()):
                 objective_function = objectiveFunction()
                 objective_function.pycode = f'f["{output_node.name}"]["{objective}"]'
-                objective_function.penScale = penalty_scale
+                objective_function.penScale = penalty_scale[idx]
+                objective_function.fail = failure_val[idx]
                 problem.obj.append(objective_function)
             else:
                 raise ValueError(f"Objective {objective} not found in {output_node.name}.outVars")
@@ -1370,7 +1376,8 @@ if __name__ == "__main__":
     problem = nf.create_problem_objective(problem, 
                                         ["Global Warming Potential [AR6, 100 yr]"], 
                                         nf.olca_node,
-                                        penalty_scale=10) # create problem objective
+                                        failure_val=[10000000],
+                                        penalty_scale=[1]) # create problem objective
 
     # TODO: create function to setup problem constraint (In progress)
 
@@ -1407,5 +1414,9 @@ if __name__ == "__main__":
     # 8.    create_problem_objective: Add error handling for objectives list each objective         --> Done 
     #       should be checked against the outputVars 
 
-    # 9.    setup_nlopt_solver_options: Add error handling for algorithm each algorithm should 
-    #       be checked for a list BOBYQA, COBYLA, DIRECT, etc.                                      --> Done
+    # 9.    setup_nlopt_solver_options: Add error handling for algorithm each algorithm should      --> Done
+    #       be checked for a list BOBYQA, COBYLA, DIRECT, etc.
+    # 
+    # 10.   Include 'value for failure' in objective setup function                                 --> Done
+    #       The value for failure should be higher than the expected highest value for a successful 
+    #       objective.
