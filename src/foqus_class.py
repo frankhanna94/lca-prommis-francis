@@ -638,7 +638,7 @@ class NetlFoqus(object):
         
         return problem
 
-    def create_problem_objective(self, problem, objectives_list, output_node, failure_val, penalty_scale):
+    def create_problem_objective(self, problem, objectives_list, output_nodes_list, failure_val_list, ps_guide):
         """
         This function creates a problem objective
         
@@ -649,31 +649,56 @@ class NetlFoqus(object):
         objectives_list : list
             The list of objective names.
             example: ['GWP', 'CED']
-        output_node : nv.NodeVars
+        output_nodes_list : list
+            The list of output nodes.
+            example: [nf.olca_node, nf.prommis_node]
             Name of the node whose outputs are used as objectives (e.g. "openLCA" for GWP/CED).
-        penalty_scale : list
-            The penalty scale for each objective.
+        failure_val_list : list
+            The failure value for each objective.
             example: [10, 10]
-        failure_val : list
-            The value for failure for each objective.
-            example: [10000000, 10000000]
             Note: the failure value should be higher than the expected highest value for a successful objective.
+        ps_guide : pd.DataFrame
+            The penalty scale guide for each objective.
 
         Returns
         -------
         problem : foqus_lib.framework.optimizer.problem
             The problem object.
         """
-        problem.obj = []  
+        problem.obj = []
+        # error handling - all lists should have the same length
+        if not len(objectives_list) == len(output_nodes_list) == len(failure_val_list):
+            raise ValueError("All lists must have the same length")
+
+        # error handling - check that all objective elements have a scaling factor
+        for objective in objectives_list:
+            if objective not in ps_guide['objective'].to_list():
+                raise ValueError(f"Objective {objective} does not have a scaling factor")
+        
+        # error handling - check that each objective exists as an output of its corresponding node
         for idx, objective in enumerate(objectives_list):
-            if objective in list(output_node.outVars.keys()):
-                objective_function = objectiveFunction()
-                objective_function.pycode = f'f["{output_node.name}"]["{objective}"]'
-                objective_function.penScale = penalty_scale[idx]
-                objective_function.fail = failure_val[idx]
-                problem.obj.append(objective_function)
-            else:
-                raise ValueError(f"Objective {objective} not found in {output_node.name}.outVars")
+            if objective not in list(output_nodes_list[idx].outVars.keys()):
+                raise ValueError(f"Objective {objective} not found in {output_nodes_list[idx].name}.outVars")
+
+        # create the objective function equation
+        obj_function = ""
+        for idx, obj in enumerate(objectives_list):
+            obj_function += (
+                f'f["{output_nodes_list[idx].name}"]["{obj}"]'
+                f' / ps_guide["{obj}"]["penalty_scale"]'
+            )
+
+        # generate the corresponding failure value for the objective function
+        failure_value = 0
+        for idx, obj in enumerate(objectives_list):
+            scale = ps_guide.loc[ps_guide["objective"].eq(obj), "penalty_scale"].iloc[0]
+            failure_value += failure_val_list[idx] / scale
+
+        objective_function = objectiveFunction()
+        objective_function.pycode = obj_function
+        objective_function.penScale = 1
+        objective_function.fail = failure_val_list[idx]
+        problem.obj.append(objective_function)
         problem.objtype = problem.OBJ_TYPE_EVAL
         return problem
 
@@ -888,7 +913,7 @@ total_impacts = lca_prommis.generate_total_results.generate_total_results(result
 for _, row in total_impacts.iterrows():
     f[row['name']] = row['amount']
 
-impacts_path = Path.home() / "output" / "impacts.csv"
+impacts_path = Path.home() / "output" / "total_impacts.csv"
 if not impacts_path.exists():
     impacts_path.parent.mkdir(parents=True, exist_ok=True)
     total_impacts.to_csv(impacts_path, index=False)
@@ -910,16 +935,18 @@ else:
 prommis_node_script = """
 import os
 import re
+import logging
+globals()["re"] = re
 import pandas as pd
 import olca_schema as olca
 from netlolca.NetlOlca import NetlOlca
-import prommis.uky.uky_flowsheet as uky 
+import prommis.uky.uky_flowsheet as uky
 import src as lca_prommis
 
-from pyomo.environ import TransformationFactory
+from pyomo.environ import TransformationFactory, value
 from idaes.core.util.model_diagnostics import DiagnosticsToolbox
+from idaes.core.util.model_statistics import degrees_of_freedom
 from prommis.uky.costing.ree_plant_capcost import QGESSCostingData
-import prommis.uky.uky_flowsheet as uky
 
 home_dir = os.path.expanduser("~")
 
@@ -934,7 +961,7 @@ else:
     print ("Leach liquid feed not found in x")
 
 if "fs.load_sep.split_fraction" in x:
-    m.fs.load_sep.split_fraction[0.0, 'recycle'].fix(x["fs.load_sep.split_fraction"])
+    m.fs.load_sep.split_fraction[:, 'recycle'].fix(x["fs.load_sep.split_fraction"])
     logging.info("split_fraction: %f", x["fs.load_sep.split_fraction"])
 else:
     print ("fs.load_sep.split_fraction not found in x")
@@ -956,26 +983,35 @@ dv_df.to_csv(os.path.join(home_dir, "output", "decision_variables.csv"), index =
 
 uky.set_scaling(m)
 
-scaling = TransformationFactory("core.scale_model")
-scaled_model = scaling.create_using(m, rename=False)
-
-if uky.degrees_of_freedom(scaled_model) != 0:
+if degrees_of_freedom(m) != 0:
     raise AssertionError("Degrees of freedom != 0")
 
-uky.initialize_system(scaled_model)
-uky.solve_system(scaled_model)
+uky.initialize_system(m)
+uky.solve_system(m)
 
-uky.fix_organic_recycle(scaled_model)
-scaled_results = uky.solve_system(scaled_model)
+uky.fix_organic_recycle(m)
+results = uky.solve_system(m)
 
-if not uky.check_optimal_termination(scaled_results):
+if not uky.check_optimal_termination(results):
     raise RuntimeError("Solver failed to terminate optimally")
 
 # Propagate results back to original model
 results = scaling.propagate_solution(scaled_model, m)
 
+# Add result expressions (overall_ree_recovery_percentage, ree_product_purity_percentage, etc.)
+uky.add_result_expressions(m)
+
 # 5. Add Costing (Optional, but likely needed for optimization)
 uky.add_costing(m)
+uky.initialize_costing(m)
+
+# diagnostics, initialize, and solve
+dt = DiagnosticsToolbox(m)
+dt.assert_no_structural_warnings()
+
+auto = AutoScaler()
+auto.scale_variables_by_magnitude(m)
+auto.scale_constraints_by_jacobian_norm(m)
 
 # Costing initialization
 QGESSCostingData.costing_initialization(m.fs.costing)
@@ -984,6 +1020,10 @@ QGESSCostingData.initialize_variable_OM_costs(m.fs.costing)
 
 # Final solve with costing
 uky.solve_system(m)
+
+dt.assert_no_numerical_warnings()
+
+display_costing(m)
 
 prommis_data = lca_prommis.data_lca.get_lca_df(m)
 
@@ -1027,6 +1067,35 @@ finalized_df.to_csv(os.path.join(output_dir, "finalized_df.csv"), index=False)
 for _, row in finalized_df.iterrows():
     f[row['Flow_Name']] = row['LCA_Amount']
 
+prommis_outputs = { "total plant cost": value(m.fs.costing.total_overnight_capital),
+                    "total bare erected cost": value(m.fs.costing.total_BEC),
+                    "total annualized capital cost": value(m.fs.costing.annualized_cost),
+                    "total fixed OM cost": value(m.fs.costing.total_fixed_OM_cost),
+                    "total variable OM cost": value(m.fs.costing.total_variable_OM_cost[0]),
+                    "total OM cost": value(m.fs.costing.total_fixed_OM_cost) + value(m.fs.costing.total_variable_OM_cost[0]),
+                    "total annualized plant cost": value(m.fs.costing.annualized_cost) + value(m.fs.costing.total_fixed_OM_cost) + value(m.fs.costing.total_variable_OM_cost[0]),
+                    "anual rate of recovery": value(m.fs.costing.recovery_rate_per_year),
+                    "cost of recovery per REE": value(m.fs.costing.cost_of_recovery),
+                    "recovery rate": value(m.fs.overall_ree_recovery_percentage[0]),
+                    "product purity": value(m.fs.ree_product_purity_percentage[0])
+} 
+
+for output, val in prommis_outputs.items():
+    f[output] = val
+
+# store new results values in the output folder
+prommis_outputs = pd.read_csv(os.path.join(home_dir, "output", "prommis_outputs.csv"))
+# get new col name
+existing = [
+    int(n.group(1))
+    for col in prommis_outputs.columns
+    if (n := re.match(r"value_(\d+)", col))
+]
+new_col = f"value_{max(existing, default=0) + 1}"
+for count, row in prommis_outputs.iterrows():
+    output = row['output']
+    prommis_outputs.loc[count, new_col] = f[output] #new value for the output
+prommis_outputs.to_csv(os.path.join(home_dir, "output", "prommis_outputs.csv"), index = False)
 """
 
 ###############################################################################
@@ -1237,7 +1306,7 @@ if __name__ == "__main__":
     from netlolca.NetlOlca import NetlOlca
     import prommis.uky.uky_flowsheet as uky
     from prommis.uky.costing.ree_plant_capcost import QGESSCostingData
-    from pyomo.environ import TransformationFactory
+    from pyomo.environ import TransformationFactory, value
     from pyomo.core.base.var import Var
     from idaes.core.util.model_diagnostics import DiagnosticsToolbox
     import foqus_lib.framework.graph.graph as gr
@@ -1283,7 +1352,7 @@ if __name__ == "__main__":
     dv_df = pd.DataFrame(dv_data)
     dv_df.to_csv(output_dir / "decision_variables.csv", index=False)
 
-    # set decesion variables as input variables for prommis_node
+    # set decision variables as input variables for prommis_node
     for dv in nf.dv:
         nf.set_input_variables(nf.prommis_node, dv.ipvname, dv.value, dv.min, dv.max)
 
@@ -1292,6 +1361,30 @@ if __name__ == "__main__":
 
     # connect intermediate variables
     nf.connect_intermediate_variables(nf.prommis_node, nf.olca_node)
+
+    # Define additional output variables for prommis_node
+    prommis_outputs = { "total plant cost": value(m.fs.costing.total_overnight_capital),
+                        "total bare erected cost": value(m.fs.costing.total_BEC),
+                        "total annualized capital cost": value(m.fs.costing.annualized_cost),
+                        "total fixed OM cost": value(m.fs.costing.total_fixed_OM_cost),
+                        "total variable OM cost": value(m.fs.costing.total_variable_OM_cost[0]),
+                        "total OM cost": value(m.fs.costing.total_fixed_OM_cost) + value(m.fs.costing.total_variable_OM_cost[0]),
+                        "total annualized plant cost": value(m.fs.costing.annualized_cost) + value(m.fs.costing.total_fixed_OM_cost) + value(m.fs.costing.total_variable_OM_cost[0]),
+                        "anual rate of recovery": value(m.fs.costing.recovery_rate_per_year),
+                        "cost of recovery per REE": value(m.fs.costing.cost_of_recovery),
+                        "recovery rate": value(m.fs.overall_ree_recovery_percentage[0]),
+                        "product purity": value(m.fs.ree_product_purity_percentage[0])
+    }
+    
+    for output, value in prommis_outputs.items():
+        nf.initiate_output_variables(nf.prommis_node,
+                                     output,
+                                     value)
+
+    # export prommis outputs to the output directory
+    prommis_outputs_df = pd.DataFrame(prommis_outputs.items(),columns=["output", "value"])
+    prommis_outputs_df.to_csv(output_dir / "prommis_outputs.csv", index=False)
+    
 
     # initiate lca_model
     lca_df_finalized = nf.exchanges
@@ -1358,8 +1451,6 @@ if __name__ == "__main__":
             )
         )
 
-    # TODO: differentiate water input and water emissions in the lca_finalized_df
-
     nf.define_node_script(nf.olca_node, openlca_node_script)
 
     # nf.validate_node_script(nf.olca_node)
@@ -1372,14 +1463,22 @@ if __name__ == "__main__":
     
     problem = nf.setup_optimizer(my_session, "NLopt", nf.prommis_node) # first step in setting up optimizer
 
-    # GWP, CED are openLCA node outputs, so pass olca_node.name
-    problem = nf.create_problem_objective(problem, 
-                                        ["Global Warming Potential [AR6, 100 yr]"], 
-                                        nf.olca_node,
-                                        failure_val=[10000000],
-                                        penalty_scale=[1]) # create problem objective
+    ps_guide = pd.DataFrame(columns=['objective', 'penalty_scale'])
+    ps_guide[['objective', 'penalty_scale']] = prommis_outputs_df[['output', 'value']].values
+    ps_guide = pd.concat(
+        [ps_guide,
+        total_impacts[['name', 'amount']].rename(columns={'name': 'objective', 'amount': 'penalty_scale'})
+        ],
+        ignore_index=True
+    )
 
-    # TODO: create function to setup problem constraint (In progress)
+
+    problem = nf.create_problem_objective(problem,                                         # TODO: Add weights list
+                                        ["Freshwater ecotoxicity"], 
+                                        [nf.olca_node],
+                                        failure_val_list=[10000000],
+                                        ps_guide=ps_guide) # create problem objective
+
 
     problem = nf.setup_nlopt_solver_options(problem, True) # setup solver options
 
@@ -1420,3 +1519,19 @@ if __name__ == "__main__":
     # 10.   Include 'value for failure' in objective setup function                                 --> Done
     #       The value for failure should be higher than the expected highest value for a successful 
     #       objective.
+
+    # 11.   Objective Function setup
+    #       11.1    adjust the create_problem_objective to allow the user to include multiple outputs in    --> Done
+    #               a single scaled objective function.
+
+    #       11.2    add code to export all the prommis model outputs and add them to the prommis node       --> Done
+    #               outputs. These include: the recovery rate, the total mass output, the cost, etc.
+
+    #       11.3    add code to store these prommis results in the outputs folder                           --> Done
+
+    #       11.4    add code to create the ps_guide using the initation results of prommis (prommis         --> Done
+    #               results) and openLCA (olca node outputs - e.g., impacts)
+
+    #       11.5    test changes in sandbox                                                                 --> In Progress
+
+    #       11.6    reflect changes in jupyter notebook
