@@ -638,7 +638,7 @@ class NetlFoqus(object):
         
         return problem
 
-    def create_problem_objective(self, problem, objectives_list, output_nodes_list, failure_val_list, ps_guide):
+    def create_problem_objective_singular (self, problem, objectives_list, output_nodes_list, failure_val_list, penalty_scale_list):
         """
         This function creates a problem objective
         
@@ -657,8 +657,8 @@ class NetlFoqus(object):
             The failure value for each objective.
             example: [10, 10]
             Note: the failure value should be higher than the expected highest value for a successful objective.
-        ps_guide : pd.DataFrame
-            The penalty scale guide for each objective.
+        penalty_scale_list : list
+            The penalty scale for each objective.
 
         Returns
         -------
@@ -666,40 +666,81 @@ class NetlFoqus(object):
             The problem object.
         """
         problem.obj = []
-        # error handling - all lists should have the same length
-        if not len(objectives_list) == len(output_nodes_list) == len(failure_val_list):
-            raise ValueError("All lists must have the same length")
-
-        # error handling - check that all objective elements have a scaling factor
-        for objective in objectives_list:
-            if objective not in ps_guide['objective'].to_list():
-                raise ValueError(f"Objective {objective} does not have a scaling factor")
-        
-        # error handling - check that each objective exists as an output of its corresponding node
-        for idx, objective in enumerate(objectives_list):
-            if objective not in list(output_nodes_list[idx].outVars.keys()):
-                raise ValueError(f"Objective {objective} not found in {output_nodes_list[idx].name}.outVars")
-
-        # create the objective function equation
-        obj_function = ""
         for idx, obj in enumerate(objectives_list):
-            obj_function += (
-                f'f["{output_nodes_list[idx].name}"]["{obj}"]'
-                f' / ps_guide["{obj}"]["penalty_scale"]'
+
+            objective_function = objectiveFunction()
+            objective_function.pycode = f'f["{output_nodes_list[idx].name}"]["{obj}"]'
+            if len(penalty_scale_list) == 1:
+                objective_function.penScale = 1
+            else:
+                objective_function.penScale = penalty_scale_list[idx]
+            objective_function.fail = failure_val_list[idx]
+            problem.obj.append(objective_function)
+            problem.objtype = problem.OBJ_TYPE_EVAL
+        
+        return problem
+
+    def create_problem_objective_multiple (self, problem, objectives_list, output_nodes_list, failure_val_list, penalty_scale_list, weights_list):
+    
+        """
+        This function creates a problem objective
+        
+        Parameters
+        ----------
+        problem : foqus_lib.framework.optimizer.problem
+            The problem object.
+        objectives_list : list
+            The list of objective names.
+            example: ['GWP', 'CED']
+        output_nodes_list : list
+            The list of output nodes.
+            example: [nf.olca_node, nf.prommis_node]
+            Name of the node whose outputs are used as objectives (e.g. "openLCA" for GWP/CED).
+        failure_val_list : list
+            The failure value for each objective.
+            example: [10, 10]
+            Note: the failure value should be higher than the expected highest value for a successful objective.
+        penalty_scale_list : list
+            The penalty scale for each objective.
+
+        Returns
+        -------
+        problem : foqus_lib.framework.optimizer.problem
+            The problem object.
+        """
+        problem.obj = []
+        
+        # generate obj py_code
+        obj_py_code = ""
+
+        for idx, obj in enumerate(objectives_list):
+            term = (
+                f'(f["{output_nodes_list[idx].name}"]["{obj}"]'
+                f' * {float(weights_list[idx])}'
+                f' / {float(penalty_scale_list[idx])})'
             )
 
-        # generate the corresponding failure value for the objective function
+            # add '+' between terms
+            obj_py_code += (" + " if idx > 0 else "") + term
+        
+        # generate failure value
         failure_value = 0
         for idx, obj in enumerate(objectives_list):
-            scale = ps_guide.loc[ps_guide["objective"].eq(obj), "penalty_scale"].iloc[0]
-            failure_value += failure_val_list[idx] / scale
+            failure_value += (
+                failure_val_list[idx] * 
+                weights_list[idx] / 
+                penalty_scale_list[idx]
+            ) 
 
-        objective_function = objectiveFunction()
-        objective_function.pycode = obj_function
-        objective_function.penScale = 1
-        objective_function.fail = failure_val_list[idx]
-        problem.obj.append(objective_function)
-        problem.objtype = problem.OBJ_TYPE_EVAL
+        for idx, obj in enumerate(objectives_list):
+
+            objective_function = objectiveFunction()
+            objective_function.pycode = obj_py_code
+            objective_function.penScale = 1
+            objective_function.fail = failure_value
+            problem.obj.append(objective_function)
+            problem.objtype = problem.OBJ_TYPE_EVAL
+        
         return problem
 
     def create_problem_constraint ( self, 
@@ -871,7 +912,10 @@ new_col = f"parameter_value_{max(existing, default=0) + 1}"
 for count, row in params.iterrows():
     desc = row['parameter_description']
 
-    matching_keys = [k for k in x.keys() if k.startswith(desc)]
+    matching_keys = []
+    for k in x.keys():
+        if k.startswith(desc):
+            matching_keys.append(k)
 
     if matching_keys and x[matching_keys[0]] is not None:
         params.at[count, new_col] = float(x[matching_keys[0]])
@@ -947,6 +991,8 @@ from pyomo.environ import TransformationFactory, value
 from idaes.core.util.model_diagnostics import DiagnosticsToolbox
 from idaes.core.util.model_statistics import degrees_of_freedom
 from prommis.uky.costing.ree_plant_capcost import QGESSCostingData
+from prommis.uky.uky_flowsheet import display_costing
+from idaes.core.scaling import AutoScaler
 
 home_dir = os.path.expanduser("~")
 
@@ -994,9 +1040,6 @@ results = uky.solve_system(m)
 
 if not uky.check_optimal_termination(results):
     raise RuntimeError("Solver failed to terminate optimally")
-
-# Propagate results back to original model
-results = scaling.propagate_solution(scaled_model, m)
 
 # Add result expressions (overall_ree_recovery_percentage, ree_product_purity_percentage, etc.)
 uky.add_result_expressions(m)
@@ -1463,60 +1506,79 @@ if __name__ == "__main__":
     
     problem = nf.setup_optimizer(my_session, "NLopt", nf.prommis_node) # first step in setting up optimizer
 
-    ps_guide = pd.DataFrame(columns=['objective', 'penalty_scale'])
-    ps_guide[['objective', 'penalty_scale']] = prommis_outputs_df[['output', 'value']].values
+    ps_guide = pd.DataFrame(columns=['objective', 'initial_value', 'penalty_scale'])
+    ps_guide[['objective', 'initial_value']] = prommis_outputs_df[['output', 'value']].values
     ps_guide = pd.concat(
         [ps_guide,
-        total_impacts[['name', 'amount']].rename(columns={'name': 'objective', 'amount': 'penalty_scale'})
+        total_impacts[['name', 'amount']].rename(columns={'name': 'objective', 'amount': 'initial_value'})
         ],
         ignore_index=True
     )
+    for idx, row in ps_guide.iterrows():
+        ps_guide.at[idx, 'penalty_scale'] = 1/row['initial_value'] if row['initial_value'] != 0 else 1
+
+    objectives_list =  ["Freshwater ecotoxicity", "total plant cost"]
+    
+    penalty_scale_list = []
+
+    for objective in objectives_list:
+        if objective not in ps_guide['objective'].to_list():
+            raise ValueError(f"Objective {objective} not found in ps_guide")
+        penalty_scale_list.append(ps_guide.loc[ps_guide['objective'] == objective, 'penalty_scale'].values[0])
+
+    # problem = nf.create_problem_objective_singular(problem,                                         
+    #                                             ["Freshwater ecotoxicity"], 
+    #                                             [nf.olca_node],
+    #                                             [10000000],
+    #                                             penalty_scale_list
+    #                                             ) # create problem objective
 
 
-    problem = nf.create_problem_objective(problem,                                         # TODO: Add weights list
-                                        ["Freshwater ecotoxicity"], 
-                                        [nf.olca_node],
-                                        failure_val_list=[10000000],
-                                        ps_guide=ps_guide) # create problem objective
-
+    problem = nf.create_problem_objective_multiple(problem,                                         
+                                                ["Freshwater ecotoxicity", "total plant cost"], 
+                                                [nf.olca_node, nf.prommis_node],
+                                                [10000000, 1.3],
+                                                penalty_scale_list,
+                                                [0.7, 0.3]
+                                                ) # create problem objective
 
     problem = nf.setup_nlopt_solver_options(problem, True) # setup solver options
 
     my_solver, problem = nf.run_optimization(problem, my_session)  # run optimization
 
     # TODO:
-    # 1.    create a function to extract the optimization result and pass the final                 --> In progress
+    # 1.    create a function to extract the optimization result and pass the final                         --> In progress
     #       result to openLCA 
 
-    # 2.    add code to extract and store the decision variables values at every run                --> Done
+    # 2.    add code to extract and store the decision variables values at every run                        --> Done
 
-    # 3.    create function to setup the problem constraint (alrady included above)                 --> Done
+    # 3.    create function to setup the problem constraint (alrady included above)                         --> Done
     #       Issue
     #       =====
-    #       The issue with this method is that it requires the user to write a python code          --> TBD
+    #       The issue with this method is that it requires the user to write a python code                  --> TBD
     #       to define the constraint - as such this is not ideal. 
     #       example: py_code = f["olca_node"]["Cumulative Energy Demand"] < 100
     #       What even makes this method more challenging is the need to have the constraint 
     #       variables included in the node outputs - which is autmatically true for the 
     #       olca_node but should be defined separately for the prommis_node.
 
-    # 4.    fix function to validate the node script - the current function has bugs                --> In progress
+    # 4.    fix function to validate the node script - the current function has bugs                        --> In progress
 
-    # 5.    differentiate between water input and water emissions in lca_df_finalized               --> Done
+    # 5.    differentiate between water input and water emissions in lca_df_finalized                       --> Done
 
-    # 6.    should the data extraction functionality be part of the netlfoqus class or              --> TBD
+    # 6.    should the data extraction functionality be part of the netlfoqus class or                      --> TBD
     #       remain a separate code included in the jupter notebook and node scripts?
 
-    # 7.    setup_optimizer: add error handling for solver name (should be checked for a list)      --> Skipped for now
-    #                                                                                                   since we ony need NLopt
+    # 7.    setup_optimizer: add error handling for solver name (should be checked for a list)              --> Skipped for now
+    #                                                                                                           since we ony need NLopt
 
-    # 8.    create_problem_objective: Add error handling for objectives list each objective         --> Done 
+    # 8.    create_problem_objective: Add error handling for objectives list each objective                 --> Done 
     #       should be checked against the outputVars 
 
-    # 9.    setup_nlopt_solver_options: Add error handling for algorithm each algorithm should      --> Done
+    # 9.    setup_nlopt_solver_options: Add error handling for algorithm each algorithm should              --> Done
     #       be checked for a list BOBYQA, COBYLA, DIRECT, etc.
     # 
-    # 10.   Include 'value for failure' in objective setup function                                 --> Done
+    # 10.   Include 'value for failure' in objective setup function                                         --> Done
     #       The value for failure should be higher than the expected highest value for a successful 
     #       objective.
 
@@ -1532,6 +1594,6 @@ if __name__ == "__main__":
     #       11.4    add code to create the ps_guide using the initation results of prommis (prommis         --> Done
     #               results) and openLCA (olca node outputs - e.g., impacts)
 
-    #       11.5    test changes in sandbox                                                                 --> In Progress
+    #       11.5    test changes in sandbox                                                                 --> Done
 
-    #       11.6    reflect changes in jupyter notebook
+    #       11.6    reflect changes in jupyter notebook                                                     --> In progress
