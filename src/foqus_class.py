@@ -27,6 +27,7 @@ from foqus_lib.framework.session.session import session
 from foqus_lib.framework.optimizer.problem import objectiveFunction
 import foqus_lib.framework.optimizer.NLopt as nlopt
 from foqus_lib.framework.optimizer.problem import inequalityConstraint
+from pyomo.environ import TransformationFactory, value
 
 import src as lca_prommis
 
@@ -743,6 +744,51 @@ class NetlFoqus(object):
         
         return problem
 
+    def get_max_constraint (self, variable, node, max_value):
+        """
+        Helper method to generate a inquality constraint function of the form: g(x) <= 0
+        The constraint in this case is to set a maximum value for a variable.
+        Example: function to set a constraint where maximum water consumption is 1000 Liters
+
+        Parameters
+        ----------
+        variable : str
+            The name of the variable to set the maximum value for.
+        node : str
+            The name of the node that contains the variable.
+        max_value : float
+            The maximum value to set for the variable.
+
+        Returns
+        -------
+        str
+            The python code to be used as a constraint.
+        """
+        return f'(f["{node.name}"]["{variable}"] - {max_value})'
+
+    def get_min_constraint (self, variable, node, min_value):
+        """
+        Helper method to generate a inquality constraint function of the form: g(x) <= 0
+        The constraint in this case is to set a minimum value for a variable.
+        Example: function to set a constraint where minimum recovery rate is 90% (e.g., 0.9)
+
+        Parameters
+        ----------
+        variable : str
+            The name of the variable to set the maximum value for.
+        node : str
+            The name of the node that contains the variable.
+        min_value : float
+            The minimum value to set for the variable.
+
+        Returns
+        -------
+        str
+            The python code to be used as a constraint.
+        """
+
+        return f'({min_value} - f["{node.name}"]["{variable}"])'
+
     def create_problem_constraint ( self, 
                                     problem, 
                                     pycode,
@@ -1332,6 +1378,59 @@ def validate_optimization_problem(problem, session): # Work still in progress - 
     logging.info(f"Selected Solver: {problem.solver}")
     logging.info(f"Solver Options: {problem.solverOptions.get(problem.solver, {})}")
 
+def generate_penalty_scales(prommis_outputs_df, olca_outputs_df):
+    """
+    Helper method to generate penalty scales for the potential objective variables
+
+    Parameters
+    ----------
+    prommis_outputs_df : pandas.DataFrame
+        The dataframe containing the prommis outputs from the first run
+    olca_outputs_df : pandas.DataFrame
+        The dataframe containing the olca outputs from the first run
+
+    Returns
+    -------
+    ps_guide : pandas.DataFrame
+        The dataframe containing the penalty scales for the potential objective variables
+    """
+    ps_guide = pd.DataFrame(columns=['objective', 'initial_value', 'penalty_scale'])
+    ps_guide[['objective', 'initial_value']] = prommis_outputs_df[['output', 'value']].values
+    ps_guide = pd.concat(
+        [ps_guide,
+        olca_outputs_df[['name', 'amount']].rename(columns={'name': 'objective', 'amount': 'initial_value'})
+        ],
+        ignore_index=True
+    )
+    for idx, row in ps_guide.iterrows():
+        ps_guide.at[idx, 'penalty_scale'] = 1/row['initial_value'] if row['initial_value'] != 0 else 1    
+
+    return ps_guide
+
+def get_penalty_scales(objectives_list, ps_guide):
+    """
+    Helper method to get the penalty scales based on a selection of objectives
+
+    Parameters
+    ----------
+    objectives_list : list
+        The list of objective names.
+    ps_guide : pandas.DataFrame
+        The dataframe containing the penalty scales for the potential objective variables
+
+    Returns
+    -------
+    penalty_scale_list : list
+        The list of penalty scales for the selected objectives
+    """
+    penalty_scale_list = []
+
+    for objective in objectives_list:
+        if objective not in ps_guide['objective'].to_list():
+            raise ValueError(f"Objective {objective} not found in ps_guide")
+        penalty_scale_list.append(ps_guide.loc[ps_guide['objective'] == objective, 'penalty_scale'].values[0])
+
+    return penalty_scale_list
 
 #
 # SANDBOX
@@ -1404,19 +1503,18 @@ if __name__ == "__main__":
 
     # connect intermediate variables
     nf.connect_intermediate_variables(nf.prommis_node, nf.olca_node)
-
-    # Define additional output variables for prommis_node
+    
     prommis_outputs = { "total plant cost": value(m.fs.costing.total_overnight_capital),
-                        "total bare erected cost": value(m.fs.costing.total_BEC),
-                        "total annualized capital cost": value(m.fs.costing.annualized_cost),
-                        "total fixed OM cost": value(m.fs.costing.total_fixed_OM_cost),
-                        "total variable OM cost": value(m.fs.costing.total_variable_OM_cost[0]),
-                        "total OM cost": value(m.fs.costing.total_fixed_OM_cost) + value(m.fs.costing.total_variable_OM_cost[0]),
-                        "total annualized plant cost": value(m.fs.costing.annualized_cost) + value(m.fs.costing.total_fixed_OM_cost) + value(m.fs.costing.total_variable_OM_cost[0]),
-                        "anual rate of recovery": value(m.fs.costing.recovery_rate_per_year),
-                        "cost of recovery per REE": value(m.fs.costing.cost_of_recovery),
-                        "recovery rate": value(m.fs.overall_ree_recovery_percentage[0]),
-                        "product purity": value(m.fs.ree_product_purity_percentage[0])
+                "total bare erected cost": value(m.fs.costing.total_BEC),
+                "total annualized capital cost": value(m.fs.costing.annualized_cost),
+                "total fixed OM cost": value(m.fs.costing.total_fixed_OM_cost),
+                "total variable OM cost": value(m.fs.costing.total_variable_OM_cost[0]),
+                "total OM cost": value(m.fs.costing.total_fixed_OM_cost) + value(m.fs.costing.total_variable_OM_cost[0]),
+                "total annualized plant cost": value(m.fs.costing.annualized_cost) + value(m.fs.costing.total_fixed_OM_cost) + value(m.fs.costing.total_variable_OM_cost[0]),
+                "anual rate of recovery": value(m.fs.costing.recovery_rate_per_year),
+                "cost of recovery per REE": value(m.fs.costing.cost_of_recovery),
+                "recovery rate": value(m.fs.overall_ree_recovery_percentage[0]),
+                "product purity": value(m.fs.ree_product_purity_percentage[0])
     }
     
     for output, value in prommis_outputs.items():
@@ -1506,25 +1604,11 @@ if __name__ == "__main__":
     
     problem = nf.setup_optimizer(my_session, "NLopt", nf.prommis_node) # first step in setting up optimizer
 
-    ps_guide = pd.DataFrame(columns=['objective', 'initial_value', 'penalty_scale'])
-    ps_guide[['objective', 'initial_value']] = prommis_outputs_df[['output', 'value']].values
-    ps_guide = pd.concat(
-        [ps_guide,
-        total_impacts[['name', 'amount']].rename(columns={'name': 'objective', 'amount': 'initial_value'})
-        ],
-        ignore_index=True
-    )
-    for idx, row in ps_guide.iterrows():
-        ps_guide.at[idx, 'penalty_scale'] = 1/row['initial_value'] if row['initial_value'] != 0 else 1
+    ps_guide = foqus_class.generate_penalty_scales(prommis_outputs_df, total_impacts)
 
     objectives_list =  ["Freshwater ecotoxicity", "total plant cost"]
     
-    penalty_scale_list = []
-
-    for objective in objectives_list:
-        if objective not in ps_guide['objective'].to_list():
-            raise ValueError(f"Objective {objective} not found in ps_guide")
-        penalty_scale_list.append(ps_guide.loc[ps_guide['objective'] == objective, 'penalty_scale'].values[0])
+    penalty_scale_list = foqus_class.get_penalty_scales(objectives_list, ps_guide)
 
     # problem = nf.create_problem_objective_singular(problem,                                         
     #                                             ["Freshwater ecotoxicity"], 
@@ -1541,6 +1625,9 @@ if __name__ == "__main__":
                                                 penalty_scale_list,
                                                 [0.7, 0.3]
                                                 ) # create problem objective
+
+    # set up constraint
+    #constraint = nf.
 
     problem = nf.setup_nlopt_solver_options(problem, True) # setup solver options
 
