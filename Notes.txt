@@ -829,4 +829,34 @@ References:
     1- https://foqus.readthedocs.io/en/stable/chapt_opt/reference/optimization.html
     2- https://app.readthedocs.org/projects/foqus/downloads/pdf/latest/
     3- https://doi.org/10.1016/j.egypro.2014.11.113
-    
+
+New instructions to setup environment
+-------------------------------------
+
+conda create -n pflca python=3.11
+
+pip install git+https://github.com/USEPA/Federal-LCA-Commons-Elementary-Flow-List#egg=fedelemflowlist
+
+pip install git+https://github.com/NETL-RIC/netlolca#egg=netlolca
+
+pip install git+https://github.com/prommis/prommis.git
+
+pip install git+https://github.com/CCSI-Toolset/FOQUS
+
+conda install --yes -c conda-forge -c CCSI-Toolset psuade-lite=1.9
+
+conda install -y -c conda-forge nlopt
+
+idaes get-extensions
+
+conda install -y -c conda-forge ipopt
+
+pip install pymatgen==2025.10.7
+
+pip intall tabulate==0.9.0
+
+pip install matplotlib==3.10.8
+
+conda install pubchempy==1.0.5
+
+conda install pyqt
