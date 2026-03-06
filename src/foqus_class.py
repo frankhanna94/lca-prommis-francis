@@ -9,25 +9,18 @@
 import os
 import logging
 from pathlib import Path
-
 import pandas as pd
-import olca_schema as olca
+
 from netlolca.NetlOlca import NetlOlca
 import prommis.uky.uky_flowsheet as uky
-from prommis.uky.costing.ree_plant_capcost import QGESSCostingData
-from pyomo.environ import TransformationFactory
 from pyomo.core.base.var import Var
-from idaes.core.util.model_diagnostics import DiagnosticsToolbox
 import foqus_lib.framework.graph.graph as gr
-import foqus_lib.framework.graph.node as nd
-import foqus_lib.framework.graph.edge as ed
 import foqus_lib.framework.graph.nodeVars as nv
 from foqus_lib.framework.uq.Distribution import Distribution
 from foqus_lib.framework.session.session import session
-from foqus_lib.framework.optimizer.problem import objectiveFunction
+from foqus_lib.framework.optimizer.problem import objectiveFunction, inequalityConstraint
 import foqus_lib.framework.optimizer.NLopt as nlopt
-from foqus_lib.framework.optimizer.problem import inequalityConstraint
-from pyomo.environ import TransformationFactory, value
+from pyomo.environ import value
 
 import src as lca_prommis
 
@@ -1447,20 +1440,15 @@ if __name__ == "__main__":
     import olca_schema as olca
     from netlolca.NetlOlca import NetlOlca
     import prommis.uky.uky_flowsheet as uky
-    from prommis.uky.costing.ree_plant_capcost import QGESSCostingData
-    from pyomo.environ import TransformationFactory, value
+    from pyomo.environ import value
     from pyomo.core.base.var import Var
-    from idaes.core.util.model_diagnostics import DiagnosticsToolbox
     import foqus_lib.framework.graph.graph as gr
-    import foqus_lib.framework.graph.node as nd
-    import foqus_lib.framework.graph.edge as ed
     import foqus_lib.framework.graph.nodeVars as nv
     from foqus_lib.framework.uq.Distribution import Distribution
     from foqus_lib.framework.session.session import session
-    from foqus_lib.framework.optimizer.problem import objectiveFunction
+    from foqus_lib.framework.optimizer.problem import objectiveFunction, inequalityConstraint
     import src as lca_prommis
     import foqus_lib.framework.optimizer.NLopt as nlopt
-    from foqus_lib.framework.optimizer.problem import inequalityConstraint
 
     output_dir = Path.home() / "output" 
     if not output_dir.exists():
@@ -1601,6 +1589,8 @@ if __name__ == "__main__":
     # nf.validate_node_script(nf.prommis_node)
 
     my_session = nf.create_session("/home/franc/foqus_wd") # create session
+    # Note: This returns many warnings and errors - we can ignore this as we only 
+    # care about foqus loading the NLopt solver
     
     problem = nf.setup_optimizer(my_session, "NLopt", nf.prommis_node) # first step in setting up optimizer
 
