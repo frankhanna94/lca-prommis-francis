@@ -9,6 +9,7 @@
 import os
 import logging
 from pathlib import Path
+import json
 import pandas as pd
 
 from netlolca.NetlOlca import NetlOlca
@@ -31,7 +32,27 @@ class NetlFoqus(object):
     # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
     # Class Global Variables
     # ////////////////////////////////////////////////////////////////////////
-    output_dir = Path.home() / "output" 
+    working_dir = os.path.join(os.path.expanduser("~"), ".netl")
+    if not os.path.isdir(working_dir):
+        try:
+            os.makedirs(working_dir)
+        except:
+            logging.warning("Failed to create folder %s!" % working_dir)
+            try:
+                # Revert to simple mkdir
+                os.mkdir(working_dir)
+            except:
+                logging.error("Could not create folder, %s" % working_dir)
+            else:
+                logging.info("Created %s" % working_dir)
+        else:
+            logging.info("Created %s" % working_dir)
+
+    if os.path.isdir(working_dir):
+        output_dir = working_dir
+    else:
+        output_dir = os.path.expanduser("~")
+
     # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
     # Class Initialization
     # ////////////////////////////////////////////////////////////////////////
@@ -935,8 +956,14 @@ from netlolca.NetlOlca import NetlOlca
 
 import src as lca_prommis
 
+working_dir = os.path.join(os.path.expanduser("~"), ".netl")
+if os.path.isdir(working_dir):
+    output_dir = working_dir
+else:
+    output_dir = os.path.expanduser("~")
+
 # get the parameters file from the output directory
-my_parameters_path = Path.home() / "output" / "my_parameters.csv"
+my_parameters_path = os.path.join(output_dir, "my_parameters.csv")
 my_parameters = pd.read_csv(my_parameters_path)
 params = my_parameters.copy() # get a copy of the parameters df
 
@@ -969,7 +996,7 @@ params1 = params1[['parameter_name', 'parameter_description', new_col]]
 params1.rename(columns={new_col: 'parameter_value'}, inplace=True)
 
 # get run information - already initiated outside the olca_node_script
-run_info_path = Path.home() / "output" / "run_info.csv"
+run_info_path = os.path.join(output_dir, "run_info.csv")
 run_info = pd.read_csv(run_info_path)
 ps_uuid = run_info.loc[run_info['item'] == 'ps_uuid', 'description'].values[0]
 impact_method_uuid = run_info.loc[run_info['item'] == 'impact_method_uuid', 'description'].values[0]
@@ -996,9 +1023,8 @@ total_impacts = lca_prommis.generate_total_results.generate_total_results(result
 for _, row in total_impacts.iterrows():
     f[row['name']] = row['amount']
 
-impacts_path = Path.home() / "output" / "total_impacts.csv"
-if not impacts_path.exists():
-    impacts_path.parent.mkdir(parents=True, exist_ok=True)
+impacts_path = os.path.join(output_dir, "total_impacts.csv")
+if not os.path.exists(impacts_path):
     total_impacts.to_csv(impacts_path, index=False)
 else:
     impacts = pd.read_csv(impacts_path)
@@ -1033,7 +1059,11 @@ from prommis.uky.costing.ree_plant_capcost import QGESSCostingData
 from prommis.uky.uky_flowsheet import display_costing
 from idaes.core.scaling import AutoScaler
 
-home_dir = os.path.expanduser("~")
+working_dir = os.path.join(os.path.expanduser("~"), ".netl")
+if os.path.isdir(working_dir):
+    output_dir = working_dir
+else:
+    output_dir = os.path.expanduser("~")
 
 m = uky.build()
 
@@ -1052,7 +1082,7 @@ else:
     print ("fs.load_sep.split_fraction not found in x")
 
 # store new decision variable values in the output folder
-dv_df = pd.read_csv(os.path.join(home_dir, "output", "decision_variables.csv"))
+dv_df = pd.read_csv(os.path.join(output_dir, "decision_variables.csv"))
 # get new col name
 existing = [
     int(n.group(1))
@@ -1064,7 +1094,7 @@ for count, row in dv_df.iterrows():
     dv_name = row['variable_name']
     if dv_name in x:
         dv_df.at[count, new_col] = x[dv_name]
-dv_df.to_csv(os.path.join(home_dir, "output", "decision_variables.csv"), index = False)
+dv_df.to_csv(os.path.join(output_dir, "decision_variables.csv"), index = False)
 
 uky.set_scaling(m)
 
@@ -1139,11 +1169,6 @@ finalized_df = lca_prommis.final_lca.finalize_df(
         water_type='raw fresh water'
     )
 
-output_dir = os.path.join(home_dir, 'output')
-
-if not os.path.exists(output_dir):
-    os.makedirs(output_dir)
-
 finalized_df.to_csv(os.path.join(output_dir, "finalized_df.csv"), index=False)
 
 for _, row in finalized_df.iterrows():
@@ -1166,7 +1191,7 @@ for output, val in prommis_outputs.items():
     f[output] = val
 
 # store new results values in the output folder
-prommis_outputs = pd.read_csv(os.path.join(home_dir, "output", "prommis_outputs.csv"))
+prommis_outputs = pd.read_csv(os.path.join(output_dir, "prommis_outputs.csv"))
 # get new col name
 existing = [
     int(n.group(1))
@@ -1177,7 +1202,7 @@ new_col = f"value_{max(existing, default=0) + 1}"
 for count, row in prommis_outputs.iterrows():
     output = row['output']
     prommis_outputs.loc[count, new_col] = f[output] #new value for the output
-prommis_outputs.to_csv(os.path.join(home_dir, "output", "prommis_outputs.csv"), index = False)
+prommis_outputs.to_csv(os.path.join(output_dir, "prommis_outputs.csv"), index = False)
 """
 
 ###############################################################################
@@ -1425,6 +1450,62 @@ def get_penalty_scales(objectives_list, ps_guide):
 
     return penalty_scale_list
 
+def export_decision_variables(nf_obj):
+    dv_data = []
+    for dv in nf_obj.dv:
+        dv_data.append({
+            'variable_name': dv.ipvname,
+            'value': dv.value,
+            'min': dv.min,
+            'max': dv.max,
+            'scaling': dv.scaling
+        })
+
+    dv_df = pd.DataFrame(dv_data)
+    dv_df.to_csv(os.path.join(nf_obj.output_dir, "decision_variables.csv"), index=False)
+
+    return dv_df
+
+def generate_prommis_outputs(nf_obj, m):
+    from pyomo.environ import value
+    prommis_outputs = { "total plant cost": value(m.fs.costing.total_overnight_capital),
+                        "total bare erected cost": value(m.fs.costing.total_BEC),
+                        "total annualized capital cost": value(m.fs.costing.annualized_cost),
+                        "total fixed OM cost": value(m.fs.costing.total_fixed_OM_cost),
+                        "total variable OM cost": value(m.fs.costing.total_variable_OM_cost[0]),
+                        "total OM cost": value(m.fs.costing.total_fixed_OM_cost) + value(m.fs.costing.total_variable_OM_cost[0]),
+                        "total annualized plant cost": value(m.fs.costing.annualized_cost) + value(m.fs.costing.total_fixed_OM_cost) + value(m.fs.costing.total_variable_OM_cost[0]),
+                        "anual rate of recovery": value(m.fs.costing.recovery_rate_per_year),
+                        "cost of recovery per REE": value(m.fs.costing.cost_of_recovery),
+                        "recovery rate": value(m.fs.overall_ree_recovery_percentage[0]),
+                        "product purity": value(m.fs.ree_product_purity_percentage[0])
+    }
+
+    for output, value in prommis_outputs.items():
+        nf_obj.initiate_output_variables(nf_obj.prommis_node,
+                                        output,
+                                        value)
+
+    prommis_outputs_df = pd.DataFrame(prommis_outputs.items(),columns=["output", "value"])
+    prommis_outputs_df.to_csv(os.path.join(nf_obj.output_dir, "prommis_outputs.csv"), index=False)
+
+    return prommis_outputs_df
+
+def export_run_information(nf_obj, ps_uuid, impact_method_uuid, parameter_set_name):
+    run_info = pd.DataFrame(columns=['item', 'description'])
+    run_info.loc[len(run_info)] = ['ps_uuid', ps_uuid]
+    run_info.loc[len(run_info)] = ['impact_method_uuid', impact_method_uuid]
+    run_info.loc[len(run_info)] = ['parameter_set_name', parameter_set_name]
+    run_info.to_csv(os.path.join(nf_obj.output_dir, "run_info.csv"), index=False)
+
+    return run_info
+
+def get_foqus_wd():
+    foqus_path = os.path.join(os.path.expanduser("~"), ".foqus.cfg")
+    with open(foqus_path) as f:
+        my_str = f.read()
+    my_dict = json.loads(my_str)
+    return my_dict.get("working_dir", None)
 #
 # SANDBOX
 #

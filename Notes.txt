@@ -833,9 +833,14 @@ References:
 New instructions to setup environment
 -------------------------------------
 
+Install conda
+    `wget https://repo.anaconda.com/archive/Anaconda3-2025.12-1-Linux-x86_64.sh`
+    `bash Anaconda3-2025.12-1-Linux-x86_64.sh`
+    (Run as user; installs to ~/anaconda3; accept .bashrc edits)
+
 conda create -n pflca python=3.11
 
-pip install git+https://github.com/USEPA/Federal-LCA-Commons-Elementary-Flow-List#egg=fedelemflowlist
+pip install git+https://github.com/FLCAC-admin/fedelemflowlist
 
 pip install git+https://github.com/NETL-RIC/netlolca#egg=netlolca
 
@@ -860,3 +865,15 @@ pip install matplotlib==3.10.8
 conda install pubchempy==1.0.5
 
 conda install pyqt
+
+03/10/2026
+----------
+
+Goal:
+    * Extract optimization results
+        - my_solver.bestSoFarList --> list of tuples (run number, result)
+            - find lowest result and get the associated run number      
+    * Print results - Use the 'run number' to:
+        - 
+    * Pass the best run results to openLCA
+
