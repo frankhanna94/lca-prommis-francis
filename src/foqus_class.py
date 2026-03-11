@@ -67,6 +67,7 @@ class NetlFoqus(object):
         self.olca_node = None     # openLCA node object
         self.edge = None    # edge object
         self.logger = logging.getLogger(__name__)
+        self.outVars = {} # output variables wiht corresponding nodes
         # self.session = session(useCurrentWorkingDir=True) # TBD
 
 
@@ -340,13 +341,15 @@ class NetlFoqus(object):
         """
         if not isinstance(node, gr.Node):
             raise TypeError("node must be a valid FOQUS node object")
-        self.vars.append(nv.NodeVars(ipvname=var_name, dtype = float))
-        self.vars[-1].setValue(var_value)
-        self.vars[-1].setMin(var_min)
-        self.vars[-1].setMax(var_max)
-        self.vars[-1].scaling = "Linear"
+        var = nv.NodeVars(ipvname=var_name, dtype = float)
+        if var.ipvname not in self.vars:
+            self.vars.append(var.ipvname)
+        var.setValue(var_value)
+        var.setMin(var_min)
+        var.setMax(var_max)
+        var.scaling = "Linear"
         if node is not None:
-            node.inVars[var_name] = self.vars[-1]
+            node.inVars[var_name] = var
         logging.info(
             "Set input variable %s for node %s: value=%f" % (var_name, node.name, var_value)
         )
@@ -373,7 +376,7 @@ class NetlFoqus(object):
         if not isinstance(receiving_node, gr.Node):
             raise TypeError("receiving_node must be a valid FOQUS node object")
         for var_name in exchanges_names:
-            self.vars.append(nv.NodeVars(opvname=var_name, dtype = float))
+            self.vars.append(nv.NodeVars(opvname=var_name, dtype = float).opvname)
             self.exchanges_vars.append(nv.NodeVars(opvname=var_name, dtype = float))
             value = self.exchanges.loc[self.exchanges['Flow_Name'] == var_name, 'LCA_Amount'].values[0]
             self.exchanges_vars[-1].setValue(value)
@@ -381,11 +384,14 @@ class NetlFoqus(object):
                 "Set output properties for %s: value=%f" % (var_name, value)
             )
             if producing_node is not None:
-                producing_node.outVars[var_name] = self.exchanges_vars[-1]    
+                producing_node.outVars[var_name] = self.exchanges_vars[-1]
+            if producing_node.name not in self.outVars:
+                self.outVars[producing_node.name] = []
+            self.outVars[producing_node.name].append(var_name)
 
         for var_name in exchanges_names:
             input_var_name = var_name + "_input"
-            self.vars.append(nv.NodeVars(ipvname=input_var_name, dtype = float))
+            self.vars.append(nv.NodeVars(ipvname=input_var_name, dtype = float).ipvname)
             self.exchanges_vars.append(nv.NodeVars(ipvname=input_var_name, dtype = float))
             value = self.exchanges.loc[self.exchanges['Flow_Name'] == var_name, 'LCA_Amount'].values[0]
             self.exchanges_vars[-1].setValue(value)
@@ -435,10 +441,15 @@ class NetlFoqus(object):
         """
         if not isinstance(node, gr.Node):
             raise TypeError("node must be a valid FOQUS node object")
-        self.vars.append(nv.NodeVars(opvname=var_name, dtype = float))
-        self.vars[-1].setValue(var_value)
+        var = nv.NodeVars(opvname=var_name, dtype = float)
+        if var.opvname not in self.vars:
+            self.vars.append(var.opvname)
+        var.setValue(var_value)
         if node is not None:
-            node.outVars[var_name] = self.vars[-1]
+            node.outVars[var_name] = var
+        if node.name not in self.outVars:
+            self.outVars[node.name] = []
+        self.outVars[node.name].append(var.opvname)
         logging.info(
             "Initiated output variable %s for node %s: value=%f" % (var_name, node.name, var_value)
         )
@@ -1531,10 +1542,6 @@ if __name__ == "__main__":
     import src as lca_prommis
     import foqus_lib.framework.optimizer.NLopt as nlopt
 
-    output_dir = Path.home() / "output" 
-    if not output_dir.exists():
-        output_dir.mkdir(parents=True, exist_ok=True)
-
     nf = NetlFoqus()
     m = nf.init_uky()
 
@@ -1561,7 +1568,7 @@ if __name__ == "__main__":
         })
 
     dv_df = pd.DataFrame(dv_data)
-    dv_df.to_csv(output_dir / "decision_variables.csv", index=False)
+    dv_df.to_csv(os.path.join(nf.output_dir, "decision_variables.csv"), index=False)
 
     # set decision variables as input variables for prommis_node
     for dv in nf.dv:
