@@ -838,7 +838,7 @@ Install conda
     `bash Anaconda3-2025.12-1-Linux-x86_64.sh`
     (Run as user; installs to ~/anaconda3; accept .bashrc edits)
 
-conda create -n pflca python=3.11
+conda create -n pflca python=3.11 or 3.12
 
 pip install git+https://github.com/FLCAC-admin/fedelemflowlist
 
@@ -856,13 +856,13 @@ idaes get-extensions
 
 conda install -y -c conda-forge ipopt
 
-pip install pymatgen==2025.10.7
+pip install pymatgen==2025.10.7 (should be handled in lca-prommis)
 
-pip intall tabulate==0.9.0
+pip intall tabulate==0.9.0 
 
-pip install matplotlib==3.10.8
+pip install matplotlib==3.10.8 (should be automatically added in earlier steps)
 
-conda install pubchempy==1.0.5
+conda install pubchempy==1.0.5 (should be handled in lca-prommis)
 
 conda install pyqt
 
