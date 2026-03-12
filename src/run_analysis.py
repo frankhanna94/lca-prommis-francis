@@ -140,6 +140,7 @@ def update_parameter(client,
                 'parameter_value'
             ].iloc[0]
             if param_name in new_parameter_set['parameter_name'].values
+            # if parameter name is not in new_parameter_set, keep the original value
             else param.value
         )
     
@@ -161,6 +162,7 @@ def run_analysis(client, ps_uuid, impact_method_uuid, parameter_set):
         The UUID of the impact method.
     parameter_set : olca_schema.ParameterRedefSet
         The parameter set to be used in the analysis.
+    
     Returns
     -------
     lcia_result : olca_schema.LciaResult

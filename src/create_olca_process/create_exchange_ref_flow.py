@@ -93,10 +93,19 @@ def create_exchange_ref_existing_flow(client, flow_uuid, amount, amount_formula,
         The uuid of the process associated with the flow.
     amount : float
         The amount of the flow.
+    amount_formula : str
+        Formula for the flow amount.
     unit : str
         The unit of the flow.
     is_input : bool
         Whether the flow is an input or output.
+
+    Note
+    ----
+    Note on using amount and amount formula:
+        * If amount is provided and there is no need for a parameter to be defined, amount_formula can be None
+        * If both an amount and an amount formula are provided, the amount formula will be used (override the amount)
+            In this case, the amount will be ignored and can be considered redundant.
 
     Returns
     -------

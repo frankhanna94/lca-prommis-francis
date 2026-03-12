@@ -30,30 +30,6 @@ import src as lca_prommis
 ##############################################################################
 class NetlFoqus(object):
     # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
-    # Class Global Variables
-    # ////////////////////////////////////////////////////////////////////////
-    working_dir = os.path.join(os.path.expanduser("~"), ".netl")
-    if not os.path.isdir(working_dir):
-        try:
-            os.makedirs(working_dir)
-        except:
-            logging.warning("Failed to create folder %s!" % working_dir)
-            try:
-                # Revert to simple mkdir
-                os.mkdir(working_dir)
-            except:
-                logging.error("Could not create folder, %s" % working_dir)
-            else:
-                logging.info("Created %s" % working_dir)
-        else:
-            logging.info("Created %s" % working_dir)
-
-    if os.path.isdir(working_dir):
-        output_dir = working_dir
-    else:
-        output_dir = os.path.expanduser("~")
-
-    # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
     # Class Initialization
     # ////////////////////////////////////////////////////////////////////////
     def __init__(self):
@@ -68,8 +44,9 @@ class NetlFoqus(object):
         self.edge = None    # edge object
         self.logger = logging.getLogger(__name__)
         self.outVars = {} # output variables wiht corresponding nodes
-        # self.session = session(useCurrentWorkingDir=True) # TBD
-
+        self.output_dir = lca_prommis.setup_output_directory(
+            os.path.join(os.path.expanduser("~"), ".netl")
+            )
 
     # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
     # Class Property Definitions
@@ -103,6 +80,39 @@ class NetlFoqus(object):
     # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
     # Class Function Definitions
     # ////////////////////////////////////////////////////////////////////////
+    def setup_output_directory(self, working_dir):
+        """
+        Helper method to check if the working directory exists and create it if it doesn't.
+        This method:
+            * includes a fallback to simple mkdir if the makedirs function fails.
+            * sets the output directory to home directory if it fails to create 
+            the working directory.
+        
+        Note: This method is retrieved from eLCI 
+        
+        """
+        if not os.path.isdir(working_dir):
+            try:
+                os.makedirs(working_dir)
+            except:
+                logging.warning("Failed to create folder %s!" % working_dir)
+                try:
+                    # Revert to simple mkdir
+                    os.mkdir(working_dir)
+                except:
+                    logging.error("Could not create folder, %s" % working_dir)
+                else:
+                    logging.info("Created %s" % working_dir)
+            else:
+                logging.info("Created %s" % working_dir)
+
+        if os.path.isdir(working_dir):
+            output_dir = working_dir
+        else:
+            output_dir = os.path.expanduser("~")
+
+        return output_dir
+
     def add_decision_variable(self, var_name):
         """Add a decision variable to the FOQUS flowsheet.
 
@@ -176,7 +186,7 @@ class NetlFoqus(object):
         """
         if not self.has_graph:
             raise RuntimeError(
-                "Flowsheet session not created. Call create_session() first."
+                "Flowsheet session not created. Call create_graph() first."
             )
 
         node = self.fs.addNode(node_name)
@@ -291,10 +301,6 @@ class NetlFoqus(object):
         """
         Initialize the UKy flowsheet.
 
-        Parameters
-        ----------
-        None
-
         Throws
         ------
         TypeError
@@ -330,6 +336,7 @@ class NetlFoqus(object):
     def set_input_variables(self, node, var_name, var_value, var_min, var_max):
         """
         Set the input variables for a given node.
+        
         Parameters
         ----------
         node : gr.Node
@@ -338,6 +345,14 @@ class NetlFoqus(object):
             The name of the input variable.
         var_value : float
             The value of the input variable.
+        var_min : float
+            The minimum value of the input variable.
+        var_max : float
+            The maximum value of the input variable.
+
+        Returns
+        -------
+        The input variable object
         """
         if not isinstance(node, gr.Node):
             raise TypeError("node must be a valid FOQUS node object")
@@ -404,6 +419,7 @@ class NetlFoqus(object):
     def connect_intermediate_variables(self, node1, node2):
         """
         Connect the intermediate variables.
+        
         Parameters
         ----------
         node1 : gr.Node
@@ -426,6 +442,7 @@ class NetlFoqus(object):
     def initiate_output_variables(self, node, var_name, var_value):
         """
         Initiate an output variable for a given node.
+        
         Parameters
         ----------
         node : gr.Node
@@ -554,27 +571,18 @@ class NetlFoqus(object):
             "Run script for node %s with script mode %s" % (node.name, node.scriptMode)
         )
 
-    def create_session(self, foqus_wd):
+    def create_session(self):
         """
-        Create a session.
-        Parameters
-        ----------
-        session_name : str
-            The name of the session.
-        foqus_wd : str
-            The path to the FOQUS working directory.
-        useCurrentWorkingDir : bool
-            Whether to use the current working directory.
+        Creates a session to run the optimization.
 
-        Notes:
-        -----
-        * This method requires that the working directory is set to the foqus wd path
-        * The foqus wd path is usually set by the user when installing FOQUS
-          and can vary from one machine to another
+        Returns
+        -------
+        session : foqus_lib.framework.session.session
+            The session object.
         """
 
         cwd = os.getcwd()
-
+        foqus_wd = get_foqus_wd()
         if cwd != foqus_wd:
             os.chdir(foqus_wd)
             logging.info(
@@ -693,6 +701,9 @@ class NetlFoqus(object):
         """
         problem.obj = []
         for idx, obj in enumerate(objectives_list):
+
+            if not (len(objectives_list) == len(output_nodes_list) == len(failure_val_list) == len(penalty_scale_list)):
+                raise IndexError("Lists must have the same number of elements!")
 
             objective_function = objectiveFunction()
             objective_function.pycode = f'f["{output_nodes_list[idx].name}"]["{obj}"]'
@@ -967,11 +978,9 @@ from netlolca.NetlOlca import NetlOlca
 
 import src as lca_prommis
 
-working_dir = os.path.join(os.path.expanduser("~"), ".netl")
-if os.path.isdir(working_dir):
-    output_dir = working_dir
-else:
-    output_dir = os.path.expanduser("~")
+output_dir = lca_prommis.setup_output_directory(
+            os.path.join(os.path.expanduser("~"), ".netl")
+            )
 
 # get the parameters file from the output directory
 my_parameters_path = os.path.join(output_dir, "my_parameters.csv")
@@ -982,7 +991,7 @@ params = my_parameters.copy() # get a copy of the parameters df
 existing = [
     int(m.group(1))
     for col in params.columns
-    if (m := re.match(r"parameter_value_(\d+)", col))
+    if (m := re.match(r"parameter_value_(\\d+)", col))
 ]
 new_col = f"parameter_value_{max(existing, default=0) + 1}"
 # update the parameters table with the new parameter values
@@ -1041,7 +1050,7 @@ else:
     impacts = pd.read_csv(impacts_path)
     amount_cols = [
         col for col in impacts.columns
-        if re.fullmatch(r'amount_\d+', col)
+        if re.fullmatch(r'amount_\\d+', col)
     ]
     if amount_cols:
         last_n = max(int(col.split('_')[1]) for col in amount_cols)
@@ -1070,11 +1079,9 @@ from prommis.uky.costing.ree_plant_capcost import QGESSCostingData
 from prommis.uky.uky_flowsheet import display_costing
 from idaes.core.scaling import AutoScaler
 
-working_dir = os.path.join(os.path.expanduser("~"), ".netl")
-if os.path.isdir(working_dir):
-    output_dir = working_dir
-else:
-    output_dir = os.path.expanduser("~")
+output_dir = lca_prommis.setup_output_directory(
+            os.path.join(os.path.expanduser("~"), ".netl")
+            )
 
 m = uky.build()
 
@@ -1098,7 +1105,7 @@ dv_df = pd.read_csv(os.path.join(output_dir, "decision_variables.csv"))
 existing = [
     int(n.group(1))
     for col in dv_df.columns
-    if (n := re.match(r"value_(\d+)", col))
+    if (n := re.match(r"value_(\\d+)", col))
 ]
 new_col = f"value_{max(existing, default=0) + 1}"
 for count, row in dv_df.iterrows():
@@ -1165,9 +1172,7 @@ REO_list = [
 
 df = lca_prommis.final_lca.merge_flows(df, merge_source='Solid Feed', new_flow_name='374 ppm REO Feed', value_2_merge=REO_list)
 
-
 df = lca_prommis.final_lca.merge_flows(df, merge_source='Roaster Product', new_flow_name='73.4% REO Product')
-
 
 df = lca_prommis.final_lca.merge_flows(df, merge_source='Wastewater', new_flow_name='Wastewater', merge_column='Category') 
 
@@ -1207,7 +1212,7 @@ prommis_outputs = pd.read_csv(os.path.join(output_dir, "prommis_outputs.csv"))
 existing = [
     int(n.group(1))
     for col in prommis_outputs.columns
-    if (n := re.match(r"value_(\d+)", col))
+    if (n := re.match(r"value_(\\d+)", col))
 ]
 new_col = f"value_{max(existing, default=0) + 1}"
 for count, row in prommis_outputs.iterrows():
@@ -1298,7 +1303,9 @@ def initiate_lca_model(client,
                         impact_method_uuid, 
                         parameter_set_name, 
                         parameter_set_description, 
-                        is_baseline):
+                        is_baseline,
+                        save_outputs=False,
+                        output_dir = None):
     """
     Initiate the LCA model.
     Parameters
@@ -1313,6 +1320,10 @@ def initiate_lca_model(client,
         The finalized LCA dataframe.
     impact_method_uuid : str
         The UUID of the impact method.
+    save_outputs : bool
+        Whether to save the outputs to the output directory.
+    output_dir : str
+        The directory to save the outputs.
 
     Returns
     -------
@@ -1323,6 +1334,10 @@ def initiate_lca_model(client,
     ps_uuid : str
         The UUID of the product system.
     """
+    if save_outputs:
+        if output_dir is None:
+            raise ValueError("Please provide an output directory to save the outputs")
+    
     process, my_parameters = lca_prommis.create_lca.create_new_process(client,
                                                                         lca_df_finalized,
                                                                         process_name,
@@ -1344,6 +1359,16 @@ def initiate_lca_model(client,
     result.wait_until_ready()
     total_impacts = lca_prommis.generate_total_results.generate_total_results(result)
 
+    if save_outputs:
+        total_impacts.to_csv(os.path.join(output_dir, "total_impacts.csv"), index=False)
+        my_parameters.to_csv(os.path.join(output_dir, "my_parameters.csv"), index=False)
+
+        run_info = pd.DataFrame(columns=['item', 'description'])
+        run_info.loc[len(run_info)] = ['ps_uuid', ps_uuid]
+        run_info.loc[len(run_info)] = ['impact_method_uuid', impact_method_uuid]
+        run_info.loc[len(run_info)] = ['parameter_set_name', parameter_set_name]
+        run_info.to_csv(os.path.join(output_dir, "run_info.csv"), index=False)
+    
     return total_impacts, my_parameters, ps_uuid
 
 def initialize_decision_variables(nf_obj, m):
@@ -1410,6 +1435,8 @@ def validate_optimization_problem(problem, session): # Work still in progress - 
 def generate_penalty_scales(prommis_outputs_df, olca_outputs_df):
     """
     Helper method to generate penalty scales for the potential objective variables
+    The penalty scales are calculated as the inverse of the initial values of the objective variables
+    This helps the solver normalize the values
 
     Parameters
     ----------
@@ -1422,6 +1449,11 @@ def generate_penalty_scales(prommis_outputs_df, olca_outputs_df):
     -------
     ps_guide : pandas.DataFrame
         The dataframe containing the penalty scales for the potential objective variables
+    
+    Notes
+    -----
+    * This method assumes that the objective variables don't range across orders of magnitude in the 
+    subsequent runs
     """
     ps_guide = pd.DataFrame(columns=['objective', 'initial_value', 'penalty_scale'])
     ps_guide[['objective', 'initial_value']] = prommis_outputs_df[['output', 'value']].values
@@ -1502,21 +1534,74 @@ def generate_prommis_outputs(nf_obj, m):
 
     return prommis_outputs_df
 
-def export_run_information(nf_obj, ps_uuid, impact_method_uuid, parameter_set_name):
-    run_info = pd.DataFrame(columns=['item', 'description'])
-    run_info.loc[len(run_info)] = ['ps_uuid', ps_uuid]
-    run_info.loc[len(run_info)] = ['impact_method_uuid', impact_method_uuid]
-    run_info.loc[len(run_info)] = ['parameter_set_name', parameter_set_name]
-    run_info.to_csv(os.path.join(nf_obj.output_dir, "run_info.csv"), index=False)
-
-    return run_info
-
 def get_foqus_wd():
-    foqus_path = os.path.join(os.path.expanduser("~"), ".foqus.cfg")
-    with open(foqus_path) as f:
-        my_str = f.read()
-    my_dict = json.loads(my_str)
-    return my_dict.get("working_dir", None)
+    foqus_file = ".foqus.cfg"  # created by FOQUS installer
+    foqus_path = os.path.join(os.path.expanduser("~"), foqus_file)
+    foqus_wd = None
+    if os.path.isfile(foqus_path):
+        with open(foqus_path, 'r') as f:
+            my_str = f.read()
+        # The file is just a JSON, read as such into a dictionary
+        my_dict = json.loads(my_str)
+        foqus_wd = my_dict.get("working_dir", None)
+    return foqus_wd
+
+def create_openlca_outputs(nf_obj, total_impacts, node_name):
+    """
+    Creates the openLCA outputs for the given impact categories
+    """
+    for impact_category in total_impacts['name']:
+        nf_obj.initiate_output_variables(node_name, 
+                                    impact_category, 
+                                    total_impacts.loc[total_impacts['name'] == impact_category, 'amount'].values[0])
+
+def get_optimization_results(client, solver, decision_variables, prommis_outputs, parameters, total_impacts):
+
+    """
+    This function:
+    * Gets the optimization results from the solver
+    * Identifies the best solution 
+    * Exports and displays the results for the best solution inlcuding
+        1- The decision variables
+        2- The prommis outputs
+        3- The openLCA exchanges values (parameters)
+        4- The total environmental impact results
+
+    Parameters
+    ----------
+    client : client
+        The netlolca client object
+    solver : NLoptSolver
+        The solver object containing the optimization results
+    decision_variables : dataframe
+        The decision variables
+    prommis_outputs : dataframe
+        The prommis outputs
+    parameters : dataframe
+        The openLCA exchanges values (parameters)
+    total_impacts : dataframe
+        The total environmental impact results
+    """
+
+    bestSoFarList = solver.bestSoFarList
+    best_so_far_index = bestSoFarList[-1][0]
+
+    # get parameters for given index
+    parameters
+
+    # get environmental impact results for given index
+    total_impacts
+
+    # get decision variables for given index
+    decision_variables
+
+    # prommis outputs
+    prommis_outputs
+
+
+
+
+    
 #
 # SANDBOX
 #
