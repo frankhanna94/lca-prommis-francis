@@ -1555,7 +1555,7 @@ def create_openlca_outputs(nf_obj, total_impacts, node_name):
                                     impact_category, 
                                     total_impacts.loc[total_impacts['name'] == impact_category, 'amount'].values[0])
 
-def get_optimization_results(client, solver, decision_variables, prommis_outputs, parameters, total_impacts):
+def get_optimization_results(client, ps_uuid, parameter_set_name, solver, decision_variables, prommis_outputs, parameters, total_impacts):
 
     """
     This function:
@@ -1571,6 +1571,10 @@ def get_optimization_results(client, solver, decision_variables, prommis_outputs
     ----------
     client : client
         The netlolca client object
+    ps_uuid : str
+        The UUID of the product system
+    parameter_set_name : str
+        The name of the parameter set
     solver : NLoptSolver
         The solver object containing the optimization results
     decision_variables : dataframe
@@ -1584,21 +1588,30 @@ def get_optimization_results(client, solver, decision_variables, prommis_outputs
     """
 
     bestSoFarList = solver.bestSoFarList
-    best_so_far_index = bestSoFarList[-1][0]
+    best_so_far_index = bestSoFarList[-1][0] + 1
 
     # get parameters for given index
-    parameters
-
+    col_name_param = f"parameter_value_{best_so_far_index}"
+    parameters_solution = parameters[['parameter_name', 'parameter_description', col_name_param]]
+    parameters_solution.rename(columns={col_name_param: 'parameter_value'}, inplace=True)
+    # pass the parameters to openLCA
+    lca_prommis.run_analysis.update_parameter(netl, 
+                                              ps_uuid = ps_uuid,
+                                              parameter_set_name = parameter_set_name, 
+                                              new_parameter_set = parameters_solution) 
     # get environmental impact results for given index
-    total_impacts
+    col_name_impacts = f"amount_{best_so_far_index}"
+    total_impacts_solution = total_impacts[['name', 'units',col_name_impacts]]
 
     # get decision variables for given index
-    decision_variables
+    col_name_dv = f"value_{best_so_far_index}"
+    decision_variables_solution = decision_variables[['variable_name', col_name_dv]]
 
     # prommis outputs
-    prommis_outputs
+    col_name_prommis = f"value_{best_so_far_index}"
+    prommis_outputs_solution = prommis_outputs[['output', col_name_prommis]]
 
-
+    return parameters_solution, total_impacts_solution, decision_variables_solution, prommis_outputs_solution
 
 
     
