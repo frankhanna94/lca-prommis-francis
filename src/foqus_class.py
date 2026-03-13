@@ -1595,7 +1595,7 @@ def get_optimization_results(client, ps_uuid, parameter_set_name, solver, decisi
     parameters_solution = parameters[['parameter_name', 'parameter_description', col_name_param]]
     parameters_solution.rename(columns={col_name_param: 'parameter_value'}, inplace=True)
     # pass the parameters to openLCA
-    lca_prommis.run_analysis.update_parameter(netl, 
+    lca_prommis.run_analysis.update_parameter(client, 
                                               ps_uuid = ps_uuid,
                                               parameter_set_name = parameter_set_name, 
                                               new_parameter_set = parameters_solution) 
