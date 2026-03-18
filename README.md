@@ -154,59 +154,124 @@ The instructions below focus on setting up openLCA, FOQUS, and the required pyth
 ### Setup
 
 1. Install conda in Ubuntu
+
+    ```bash
     `wget https://repo.anaconda.com/archive/Anaconda3-2025.12-1-Linux-x86_64.sh`
     `bash Anaconda3-2025.12-1-Linux-x86_64.sh`
+    ```
 
 2. Setup conda environment
+    
+    ``` bash
     conda create -n pflca python=3.11 or 3.12
+    ```
 
 3. Install fedelmflowlist
+
+    ``` bash
     pip install git+https://github.com/FLCAC-admin/fedelemflowlist
+    ```
 
 4. Install netlolca
+
+    ``` bash
     pip install git+https://github.com/NETL-RIC/netlolca#egg=netlolca
+    ```
 
 5. Install prommis
+
+    ``` bash
     pip install git+https://github.com/prommis/prommis.git
+    ```
 
 6. Install foqus
+
+    ``` bash
     pip install git+https://github.com/CCSI-Toolset/FOQUS
+    ```
 
 7. Install lca-prommis
+
+    ``` bash
     pip install git+https://github.com/KeyLogicLCA/lca-prommis.git
+    ```
 
 8. Install psuade
+
+    ``` bash
     conda install --yes -c conda-forge -c CCSI-Toolset psuade-lite=1.9
+    ```
 
 9. Install NLopt
+
+    ``` bash
     conda install -y -c conda-forge nlopt
+    ```
 
 10. Get IDAES extensions
+
+    ``` bash
     idaes get-extensions
+    ```
 
 11. Install ipopt
+
+    ``` bash
     conda install -y -c conda-forge ipopt
+    ```
 
 12. Install tabulate
+
+    ``` bash
     pip install tabulate==0.9.0
+    ```
 
 13. Install pyqt
+
+    ``` bash
     pip install pyqt
+    ```
 
 14. Install openLCA for Linux 
-    14.1 wget https://share.greendelta.com/index.php/s/hcl5JAB1p0FxfFe/download
-    14.2 mv download openLCA_mkl_Linux_x64_2.5.0_2025-06-16.tar.gz
-    14.3 gunzip openLCA_mkl_Linux_x64_2.5.0_2025-06-16.tar.gz
-    14.4 tar -xvf openLCA_mkl_Linux_x64_2.5.0_2025-06-16.tar
-    14.5 mkdir Downloads
-    14.6 mv openLCA_mkl_Linux_x64_2.5.0_2025-06-16.tar Downloads/
+    
+    ``` bash
+    wget https://share.greendelta.com/index.php/s/hcl5JAB1p0FxfFe/download
+    ```
+
+    ``` bash    
+    mv download openLCA_mkl_Linux_x64_2.5.0_2025-06-16.tar.gz
+    ```
+
+    ``` bash    
+    gunzip openLCA_mkl_Linux_x64_2.5.0_2025-06-16.tar.gz
+    ```
+
+    ``` bash    
+    tar -xvf openLCA_mkl_Linux_x64_2.5.0_2025-06-16.tar
+    ```
+
+    ``` bash    
+    mkdir Downloads
+    ```
+    
+    ``` bash    
+    mv openLCA_mkl_Linux_x64_2.5.0_2025-06-16.tar Downloads/
+    ```
 
 15. Test run openLCA
-    15.1 cd openLCA/
-    15.2 ./openLCA
+    
+    ``` bash
+    cd openLCA/
+    ```
+
+    ``` bash
+    ./openLCA
+    ```
 
 16. Install Jupyter Lab
+    ``` bash
     pip install jupyterlab
+    ```
 
 ### Install and Run
 
