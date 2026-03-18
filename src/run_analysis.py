@@ -44,6 +44,7 @@ __all__ = [
 def create_parameter_set (client, process_uuid, ps_uuid, parameter_set_name, description, is_baseline):
     """
     Create a parameter set for a product system in openLCA.
+    
     Parameters
     ----------
     client : olca_ipc.Client
@@ -58,9 +59,11 @@ def create_parameter_set (client, process_uuid, ps_uuid, parameter_set_name, des
         The description of the parameter set.
     is_baseline : bool
         Whether the parameter set is a baseline parameter set.
+    
     Returns
     -------
-    None
+    parameter_set : olca_schema.ParameterRedefSet
+        The parameter set object.
     """
     # get process object
     process_obj = client.query(olca.Process, process_uuid)

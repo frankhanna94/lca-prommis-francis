@@ -43,9 +43,9 @@ class NetlFoqus(object):
         self.olca_node = None     # openLCA node object
         self.edge = None    # edge object
         self.logger = logging.getLogger(__name__)
-        self.outVars = {} # output variables wiht corresponding nodes
+        self.outVars = {} # output variables with corresponding nodes
         self.output_dir = lca_prommis.setup_output_directory(
-            os.path.join(os.path.expanduser("~"), ".netl")
+            lca_prommis.output_dir
             )
 
     # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
@@ -80,39 +80,6 @@ class NetlFoqus(object):
     # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
     # Class Function Definitions
     # ////////////////////////////////////////////////////////////////////////
-    def setup_output_directory(self, working_dir):
-        """
-        Helper method to check if the working directory exists and create it if it doesn't.
-        This method:
-            * includes a fallback to simple mkdir if the makedirs function fails.
-            * sets the output directory to home directory if it fails to create 
-            the working directory.
-        
-        Note: This method is retrieved from eLCI 
-        
-        """
-        if not os.path.isdir(working_dir):
-            try:
-                os.makedirs(working_dir)
-            except:
-                logging.warning("Failed to create folder %s!" % working_dir)
-                try:
-                    # Revert to simple mkdir
-                    os.mkdir(working_dir)
-                except:
-                    logging.error("Could not create folder, %s" % working_dir)
-                else:
-                    logging.info("Created %s" % working_dir)
-            else:
-                logging.info("Created %s" % working_dir)
-
-        if os.path.isdir(working_dir):
-            output_dir = working_dir
-        else:
-            output_dir = os.path.expanduser("~")
-
-        return output_dir
-
     def add_decision_variable(self, var_name):
         """Add a decision variable to the FOQUS flowsheet.
 
@@ -979,7 +946,7 @@ from netlolca.NetlOlca import NetlOlca
 import src as lca_prommis
 
 output_dir = lca_prommis.setup_output_directory(
-            os.path.join(os.path.expanduser("~"), ".netl")
+            lca_prommis.output_dir
             )
 
 # get the parameters file from the output directory
@@ -1080,7 +1047,7 @@ from prommis.uky.uky_flowsheet import display_costing
 from idaes.core.scaling import AutoScaler
 
 output_dir = lca_prommis.setup_output_directory(
-            os.path.join(os.path.expanduser("~"), ".netl")
+            lca_prommis.output_dir
             )
 
 m = uky.build()
@@ -1593,8 +1560,9 @@ def get_optimization_results(client, ps_uuid, parameter_set_name, solver, decisi
     # get parameters for given index
     col_name_param = f"parameter_value_{best_so_far_index}"
     parameters_solution = parameters[['parameter_name', 'parameter_description', col_name_param]]
-    parameters_solution.rename(columns={col_name_param: 'parameter_value'}, inplace=True)
-    # pass the parameters to openLCA
+    parameters_solution = parameters_solution.rename(
+    columns={col_name_param: 'parameter_value'}
+    )    # pass the parameters to openLCA
     lca_prommis.run_analysis.update_parameter(client, 
                                               ps_uuid = ps_uuid,
                                               parameter_set_name = parameter_set_name, 

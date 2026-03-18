@@ -16,6 +16,8 @@ import src.plot_results as plot_results
 
 # Helper Function
 #---------------------------------------------------------------------------------------
+output_dir = os.path.join(os.path.expanduser("~"), ".netl")
+
 def setup_output_directory(working_dir):
     """
     Helper method to check if the working directory exists and create it if it doesn't.
